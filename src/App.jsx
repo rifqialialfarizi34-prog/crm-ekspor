@@ -1,6 +1,64 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// --- BAGIAN IKON ---
+// --- IMPORT DARI LIBRARY FIREBASE ---
+import { initializeApp } from "firebase/app";
+import { 
+  getFirestore,
+  collection, 
+  addDoc, 
+  onSnapshot, 
+  doc, 
+  deleteDoc, 
+  updateDoc, 
+  query, 
+  orderBy 
+} from 'firebase/firestore';
+
+// Import Authentication untuk login anonim
+import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
+
+// --- KONFIGURASI FIREBASE ---
+const firebaseConfig = {
+  apiKey: "AIzaSyCrG7oJCwv_StSDKjHQB1fp3fs4RLifBXQ", 
+  authDomain: "ekspor-dbrau.firebaseapp.com",
+  projectId: "ekspor-dbrau",
+  storageBucket: "ekspor-dbrau.firebasestorage.app",
+  messagingSenderId: "925800648834",
+  appId: "1:925800648834:web:5d03b3e16280c156e2249b",
+  measurementId: "G-9J75PFZLHM"
+};
+
+// Initialize Firebase services
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app); 
+
+// --- HELPER: FORMAT TANGGAL & WAKTU ---
+const formatDateTimeDisplay = (dateStr) => {
+  if (!dateStr) return '-';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return dateStr; // Jika format tidak valid, kembalikan aslinya
+  
+  // Opsi format: 27 Nov 2025, 14:30
+  return date.toLocaleString('id-ID', { 
+    day: 'numeric', 
+    month: 'short', 
+    year: '2-digit', // Tahun 2 digit biar hemat tempat
+    hour: '2-digit', 
+    minute: '2-digit',
+    hour12: false 
+  });
+};
+
+// Helper untuk input datetime-local (karena butuh format YYYY-MM-DDTHH:mm)
+const toInputDateTime = (isoString) => {
+  if (!isoString) return "";
+  // Jika data lama cuma tanggal (YYYY-MM-DD), tambahkan jam default T09:00 biar rapi di input
+  if (isoString.length === 10) return `${isoString}T09:00`;
+  return isoString;
+};
+
+// --- BAGIAN IKON (TIDAK BERUBAH) ---
 const Icon = ({ name, size = 16, className = "" }) => {
   let content;
   switch (name) {
@@ -16,7 +74,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
     case 'edit': content = <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>; break;
     case 'save': content = <><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>; break;
     case 'x': content = <><path d="M18 6 6 18"/><path d="m6 6 12 12"/></>; break;
-    case 'globe': content = <><circle cx="12" cy="12" r="10"/><line x1="2" x2="22" y1="12" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></>; break;
+    case 'globe': content = <><circle cx="12" cy="12" r="10"/><line x1="2" x2="22" y1="12" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10z"/></>; break;
     case 'mail': content = <><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></>; break;
     case 'calendar': content = <><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></>; break;
     case 'check': content = <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>; break;
@@ -41,7 +99,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
   );
 };
 
-// --- LOGIKA IMPORT CSV ---
+// --- LOGIKA IMPORT CSV (TIDAK BERUBAH) ---
 const parseCSV = (text) => {
   const lines = text.split(/\r\n|\n/);
   if (lines.length < 1) return [];
@@ -79,7 +137,6 @@ const parseCSV = (text) => {
   };
 
   const results = [];
-  const baseId = Date.now();
   
   for (let i = headerIndex + 1; i < lines.length; i++) {
     const line = lines[i].trim();
@@ -90,7 +147,6 @@ const parseCSV = (text) => {
 
     if (cleanRow.length > 1) {
       let obj = {
-        id: baseId + i + Math.random(),
         status: 'New Lead',
         interest: 'Unknown',
         nextAction: '',
@@ -134,12 +190,10 @@ const parseCSV = (text) => {
 };
 
 const App = () => {
-  const [buyers, setBuyers] = useState(() => {
-    try {
-      const saved = localStorage.getItem('export-crm-v16');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
+  // --- STATE UTAMA ---
+  const [buyers, setBuyers] = useState([]);
+  const [user, setUser] = useState(null);
+  const [authError, setAuthError] = useState(null);
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -155,15 +209,62 @@ const App = () => {
   const [quickScheduleData, setQuickScheduleData] = useState({ date: '', note: '' });
 
   const fileInputRef = useRef(null);
+  const buyersCollectionRef = collection(db, "buyers");
+
+  // --- 1. PROSES LOGIN ANONIM ---
+  useEffect(() => {
+    signInAnonymously(auth).catch((error) => {
+      console.error("Gagal Login Anonim:", error);
+      if (error.code !== 'auth/api-key-not-valid') {
+          setAuthError("Gagal terhubung ke autentikasi Firebase. Cek koneksi internet.");
+      } else {
+          setAuthError("API Key Firebase Salah. Hubungi Developer.");
+      }
+    });
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  // --- 2. KONEKSI REALTIME FIREBASE ---
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(buyersCollectionRef, orderBy("createdAt", "desc"));
+
+    const unsubscribeSnapshot = onSnapshot(q, 
+      (snapshot) => {
+        setAuthError(null);
+        const data = snapshot.docs.map((doc) => ({
+          ...doc.data(),
+          id: doc.id,
+        }));
+        setBuyers(data);
+      },
+      (error) => {
+        console.error("Error Snapshot:", error);
+        if (error.code === 'permission-denied') {
+          setAuthError("AKSES DITOLAK: Mohon buka Console Firebase > Firestore Database > Rules, dan ubah menjadi 'allow read, write: if true;'");
+        } else {
+          setAuthError(`Terjadi error: ${error.message}`);
+        }
+      }
+    );
+
+    return () => unsubscribeSnapshot();
+  }, [user]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem('export-crm-v16', JSON.stringify(buyers));
-  }, [buyers]);
 
   const getCountryTime = (countryName) => {
     if (!countryName) return null;
@@ -204,10 +305,11 @@ const App = () => {
     hot: buyers.filter(b => ['Hot', 'Warm'].includes(b.interest)).length,
   };
 
-  // Reminder Logic (Multi Schedule)
+  // Reminder Logic
   const upcomingSchedules = (() => {
     let all = [];
     buyers.forEach(buyer => {
+      // Gunakan new Date() untuk parsing tanggal+waktu
       if (buyer.nextAction && new Date(buyer.nextAction) >= new Date().setHours(0,0,0,0)) {
         all.push({ date: buyer.nextAction, note: "Jadwal Utama", company: buyer.company, status: buyer.status, interest: buyer.interest, owner: buyer.owner, buyerId: buyer.id });
       }
@@ -219,6 +321,7 @@ const App = () => {
         });
       }
     });
+    // Sort berdasarkan waktu yang lebih presisi
     return all.sort((a, b) => new Date(a.date) - new Date(b.date));
   })();
 
@@ -255,7 +358,8 @@ const App = () => {
       return nameA.localeCompare(nameB, 'en', { numeric: true, sensitivity: 'base' });
     });
 
-  // --- HANDLERS ---
+  // --- HANDLERS FIREBASE (ASYNC) ---
+
   const handleExport = () => {
     if (buyers.length === 0) return alert("Data kosong");
     const headers = ["ID","Nama Perusahaan","Owner","Industri","Negara","Alamat","WhatsApp","Telepon","Email","Website","Instagram","TikTok","Status","Minat","Catatan", "Jadwal Utama", "Jadwal Tambahan"];
@@ -276,29 +380,55 @@ const App = () => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const data = parseCSV(ev.target.result);
-        if (data.length > 0 && window.confirm(`Import ${data.length} data bersih?`)) setBuyers(prev => [...prev, ...data]);
-        else alert("Format salah atau data kosong.");
-      } catch { alert('Error reading file'); }
+        if (data.length > 0 && window.confirm(`Import ${data.length} data bersih ke Database Online?`)) {
+          for (const item of data) {
+            await addDoc(buyersCollectionRef, { ...item, createdAt: Date.now() });
+          }
+          alert("Import Berhasil!");
+        } else {
+          alert("Format salah atau data kosong.");
+        }
+      } catch (err) { alert('Error reading file or uploading: ' + err.message); }
     };
     reader.readAsText(file);
     e.target.value = null;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const data = isEditing ? buyers.map(b => b.id === formData.id ? formData : b) : [...buyers, { ...formData, id: Date.now() }];
-    setBuyers(data); setIsModalOpen(false);
+    try {
+      if (isEditing) {
+        const buyerDoc = doc(db, "buyers", formData.id);
+        await updateDoc(buyerDoc, formData);
+      } else {
+        await addDoc(buyersCollectionRef, { ...formData, createdAt: Date.now() });
+      }
+      setIsModalOpen(false);
+    } catch (err) {
+      alert("Gagal menyimpan: " + err.message);
+    }
   };
 
-  const handleDelete = (id) => {
-    if(window.confirm('Hapus data ini?')) setBuyers(buyers.filter(b => b.id !== id));
+  const handleDelete = async (id) => {
+    if(window.confirm('Hapus data ini dari Database Online?')) {
+      try {
+        await deleteDoc(doc(db, "buyers", id));
+      } catch (err) {
+        alert("Gagal menghapus: " + err.message);
+      }
+    }
   };
 
-  const handleQuickUpdate = (id, field, value) => {
-    setBuyers(buyers.map(b => b.id === id ? { ...b, [field]: value } : b));
+  const handleQuickUpdate = async (id, field, value) => {
+    try {
+      const buyerDoc = doc(db, "buyers", id);
+      await updateDoc(buyerDoc, { [field]: value });
+    } catch (err) {
+      console.error("Gagal update cepat:", err);
+    }
   };
 
   const handleSelectAll = (e) => {
@@ -309,21 +439,33 @@ const App = () => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
-  const handleBulkDelete = () => {
-    if (window.confirm(`Hapus ${selectedIds.length} data terpilih?`)) {
-      setBuyers(buyers.filter(b => !selectedIds.includes(b.id)));
-      setSelectedIds([]);
+  const handleBulkDelete = async () => {
+    if (window.confirm(`Hapus ${selectedIds.length} data terpilih secara permanen?`)) {
+      try {
+        for (const id of selectedIds) {
+          await deleteDoc(doc(db, "buyers", id));
+        }
+        setSelectedIds([]);
+      } catch (err) {
+        alert("Error bulk delete: " + err.message);
+      }
     }
   };
 
-  const handleBulkStatus = (newStatus) => {
+  const handleBulkStatus = async (newStatus) => {
     if (window.confirm(`Ubah ${selectedIds.length} data menjadi "${newStatus}"?`)) {
-      setBuyers(buyers.map(b => selectedIds.includes(b.id) ? { ...b, status: newStatus } : b));
-      setSelectedIds([]);
+      try {
+        for (const id of selectedIds) {
+          const buyerDoc = doc(db, "buyers", id);
+          await updateDoc(buyerDoc, { status: newStatus });
+        }
+        setSelectedIds([]);
+      } catch (err) {
+        alert("Error bulk update: " + err.message);
+      }
     }
   };
 
-  // Add Schedule Handlers
   const addSchedule = () => {
     setFormData({
       ...formData,
@@ -343,21 +485,24 @@ const App = () => {
     setFormData({ ...formData, schedules: newSched });
   };
 
-  // --- QUICK ADD SCHEDULE HANDLER ---
   const openQuickSchedule = (id) => {
     setQuickScheduleBuyerId(id);
     setQuickScheduleData({ date: '', note: '' });
   };
 
-  const saveQuickSchedule = () => {
+  const saveQuickSchedule = async () => {
     if (!quickScheduleData.date) return alert("Pilih tanggal");
-    setBuyers(buyers.map(b => {
-      if (b.id === quickScheduleBuyerId) {
-        return { ...b, schedules: [...(b.schedules || []), quickScheduleData] };
+    try {
+      const buyer = buyers.find(b => b.id === quickScheduleBuyerId);
+      if (buyer) {
+        const newSchedules = [...(buyer.schedules || []), quickScheduleData];
+        const buyerDoc = doc(db, "buyers", quickScheduleBuyerId);
+        await updateDoc(buyerDoc, { schedules: newSchedules });
+        setQuickScheduleBuyerId(null);
       }
-      return b;
-    }));
-    setQuickScheduleBuyerId(null);
+    } catch (err) {
+      alert("Gagal simpan jadwal: " + err.message);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -378,7 +523,6 @@ const App = () => {
     return 'bg-gray-50 text-gray-500 border-gray-200';
   };
 
-  // Components
   const InterestBadge = ({ interest }) => {
     let color = 'bg-gray-100 text-gray-500';
     let icon = null;
@@ -391,6 +535,13 @@ const App = () => {
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden relative">
       
+      {/* ALERT BOX JIKA ERROR AUTHENTICATION */}
+      {authError && (
+        <div className="absolute top-0 left-0 w-full bg-red-600 text-white p-3 text-center z-[100] shadow-lg animate-pulse font-bold text-sm">
+           <Icon name="alert"/> {authError}
+        </div>
+      )}
+
       {/* MOBILE HEADER */}
       <div className="md:hidden bg-white p-4 flex justify-between items-center shadow-sm z-30 fixed top-0 left-0 w-full">
         <div className="font-bold text-blue-600 flex items-center gap-2"><Icon name="globe"/> ExportPro</div>
@@ -403,7 +554,7 @@ const App = () => {
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Icon name="globe" className="text-blue-500" /> ExportPro
           </h1>
-          <p className="text-xs text-slate-500 mt-1">V16.0 Refined</p>
+          <p className="text-xs text-slate-500 mt-1">Online Database (Firebase)</p>
         </div>
         <div className="p-4 md:hidden border-b border-slate-700 flex justify-between items-center">
            <span className="font-bold text-white">Menu</span>
@@ -438,7 +589,6 @@ const App = () => {
                 <div className="flex gap-4 overflow-x-auto pb-2">
                   {upcomingSchedules.length > 0 ? upcomingSchedules.map((item, idx) => (
                     <div key={idx} className="min-w-[260px] bg-white p-3 rounded-lg border border-blue-100 shadow-sm hover:shadow-md transition-shadow relative">
-                      {/* Interest Badge in Corner */}
                       <div className="absolute top-2 right-2">
                           <InterestBadge interest={item.interest} />
                       </div>
@@ -448,8 +598,11 @@ const App = () => {
                            <Icon name="user" size={10}/> {item.owner || 'No Name'}
                          </div>
                       </div>
-                      <div className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium text-blue-600">
-                        <Icon name="calendar" size={12}/> {item.date} <span className="text-slate-400 font-normal">({item.note || 'Jadwal'})</span>
+                      {/* UPDATE: Tampilan jam di sini */}
+                      <div className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md w-full">
+                        <Icon name="calendar" size={12}/> 
+                        <span className="truncate">{formatDateTimeDisplay(item.date)}</span> 
+                        <span className="text-slate-400 font-normal ml-auto text-[10px]">({item.note || 'Jadwal'})</span>
                       </div>
                     </div>
                   )) : <div className="text-sm text-slate-400 italic">Tidak ada jadwal follow up mendatang.</div>}
@@ -670,18 +823,19 @@ const App = () => {
                                <option value="Hot">Hot</option>
                             </select>
                             
+                            {/* UPDATE: Input menjadi datetime-local agar bisa input JAM */}
                             <div className="flex items-center gap-1 w-full">
                                <input 
-                                 type="date" 
+                                 type="datetime-local" 
                                  className="w-full text-[10px] p-1 border rounded bg-slate-50 text-slate-600 cursor-pointer hover:bg-blue-50 transition-colors"
-                                 value={buyer.nextAction || ''}
+                                 value={toInputDateTime(buyer.nextAction)}
                                  onChange={(e) => handleQuickUpdate(buyer.id, 'nextAction', e.target.value)}
-                                 title="Jadwal Utama"
+                                 title="Jadwal Utama (Tgl & Jam)"
                                />
                                {/* TOMBOL QUICK ADD SCHEDULE */}
                                <button 
                                  onClick={() => openQuickSchedule(buyer.id)}
-                                 className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200"
+                                 className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 flex-shrink-0"
                                  title="Tambah Jadwal Lain"
                                >
                                  <Icon name="plus" size={12}/>
@@ -763,7 +917,8 @@ const App = () => {
                
                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Minat</label><select className="w-full mt-1 p-2 border rounded" value={formData.interest} onChange={e=>setFormData({...formData, interest:e.target.value})}><option>Unknown</option><option>Cold</option><option>Warm</option><option>Hot</option></select></div>
 
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Jadwal Follow Up (Utama)</label><input type="date" className="w-full mt-1 p-2 border rounded" value={formData.nextAction} onChange={e=>setFormData({...formData, nextAction:e.target.value})}/></div>
+               {/* UPDATE: Input Form Utama jadi datetime-local */}
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Jadwal Follow Up (Utama)</label><input type="datetime-local" className="w-full mt-1 p-2 border rounded" value={toInputDateTime(formData.nextAction)} onChange={e=>setFormData({...formData, nextAction:e.target.value})}/></div>
 
                <div className="md:col-span-2 border-t pt-2 mt-2">
                  <div className="flex justify-between items-center mb-2">
@@ -772,7 +927,8 @@ const App = () => {
                  </div>
                  {formData.schedules && formData.schedules.map((sched, idx) => (
                    <div key={idx} className="flex gap-2 mb-2 items-center">
-                      <input type="date" className="p-2 border rounded text-sm" value={sched.date} onChange={e => updateSchedule(idx, 'date', e.target.value)} />
+                      {/* UPDATE: Input Jadwal Tambahan jadi datetime-local */}
+                      <input type="datetime-local" className="p-2 border rounded text-sm" value={toInputDateTime(sched.date)} onChange={e => updateSchedule(idx, 'date', e.target.value)} />
                       <input type="text" className="p-2 border rounded text-sm flex-1" placeholder="Catatan (misal: Zoom meeting)" value={sched.note} onChange={e => updateSchedule(idx, 'note', e.target.value)} />
                       <button type="button" onClick={() => removeSchedule(idx)} className="text-red-500 hover:text-red-700"><Icon name="trash" size={14}/></button>
                    </div>
@@ -791,10 +947,11 @@ const App = () => {
          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-lg shadow-xl p-4 w-80">
                <h3 className="font-bold text-sm mb-3 text-slate-700">Tambah Jadwal Cepat</h3>
+               {/* UPDATE: Input Popup jadi datetime-local */}
                <input 
-                  type="date" 
+                  type="datetime-local" 
                   className="w-full mb-2 p-2 border rounded text-sm"
-                  value={quickScheduleData.date}
+                  value={toInputDateTime(quickScheduleData.date)}
                   onChange={e => setQuickScheduleData({...quickScheduleData, date: e.target.value})}
                />
                <input 
