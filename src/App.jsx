@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// --- BAGIAN IKON (Fixed: Menggunakan Switch Case agar Anti-Error) ---
+// --- BAGIAN IKON (Internal SVG - Stabil) ---
 const Icon = ({ name, size = 16, className = "" }) => {
   let content;
   switch (name) {
@@ -27,6 +27,8 @@ const Icon = ({ name, size = 16, className = "" }) => {
     case 'bell': content = <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>; break;
     case 'flame': content = <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>; break;
     case 'snowflake': content = <><path d="M2 12h20"/><path d="M12 2v20"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/><path d="m16 4-4 4-4-4"/><path d="m8 20 4-4 4 4"/></>; break;
+    case 'menu': content = <><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="18" y2="18"/></>; break;
+    case 'user': content = <><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>; break;
     default: content = <circle cx="12" cy="12" r="10"/>;
   }
 
@@ -37,7 +39,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
   );
 };
 
-// --- LOGIKA IMPORT CSV (Anti-Crash V12.2) ---
+// --- LOGIKA IMPORT CSV (Anti-Crash) ---
 const parseCSV = (text) => {
   const lines = text.split(/\r\n|\n/);
   if (lines.length < 1) return [];
@@ -45,12 +47,10 @@ const parseCSV = (text) => {
   let headerIndex = -1;
   let detectedHeaders = [];
 
-  // 1. Cari Header (Smart Search)
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
     const lineLower = lines[i].toLowerCase();
     if (lineLower.includes('nama perusahaan')) {
       headerIndex = i;
-      // Gunakan regex aman untuk split header
       const headerRow = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
       detectedHeaders = headerRow.map(h => h.toLowerCase().replace(/['"]+/g, '').trim());
       break;
@@ -62,7 +62,6 @@ const parseCSV = (text) => {
     return [];
   }
 
-  // 2. Mapping Kolom
   const colIndex = {
     company: detectedHeaders.findIndex(h => h.includes('nama perusahaan')),
     owner: detectedHeaders.findIndex(h => h.includes('nama owner') || h.includes('pic')),
@@ -79,77 +78,60 @@ const parseCSV = (text) => {
   const results = [];
   const baseId = Date.now();
   
-  // 3. Loop Data dengan Error Handling
   for (let i = headerIndex + 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
     
-    try {
-      const dataRow = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-      const cleanRow = dataRow.map(val => val ? val.trim().replace(/^"|"$/g, '').replace(/""/g, '"') : '');
+    const dataRow = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
+    const cleanRow = dataRow.map(val => val ? val.trim().replace(/^"|"$/g, '').replace(/""/g, '"') : '');
 
-      if (cleanRow.length > 1) {
-        let obj = {
-          id: baseId + i + Math.random(), // ID unik
-          status: 'New Lead',
-          interest: 'Unknown',
-          lastContact: '',
-          schedules: [],
-          company: '', owner: '', country: '', address: '', whatsapp: '', telephone: '', email: '', website: '', instagram: '', industry: ''
-        };
+    if (cleanRow.length > 1) {
+      let obj = {
+        id: baseId + i + Math.random(),
+        status: 'New Lead',
+        interest: 'Unknown',
+        nextAction: '',
+        company: '', owner: '', country: '', address: '', whatsapp: '', telephone: '', email: '', website: '', instagram: '', industry: '', notes: ''
+      };
 
-        const getVal = (idx) => (idx > -1 && cleanRow[idx] && cleanRow[idx] !== '-') ? cleanRow[idx] : '';
+      const getVal = (idx) => (idx > -1 && cleanRow[idx] && cleanRow[idx] !== '-') ? cleanRow[idx] : '';
 
-        // Sanitasi Nama Perusahaan
-        let rawComp = getVal(colIndex.company);
-        if (rawComp.startsWith('http') || rawComp.includes('www.')) {
-           obj.website = rawComp; 
-           obj.company = "Unknown"; 
-        } else {
-           obj.company = rawComp;
-        }
-
-        obj.owner = getVal(colIndex.owner);
-        obj.country = getVal(colIndex.country);
-        obj.industry = getVal(colIndex.industry);
-        obj.instagram = getVal(colIndex.instagram);
-        
-        let rawWeb = getVal(colIndex.website);
-        obj.website = rawWeb || obj.website || '';
-
-        let rawEmail = getVal(colIndex.email);
-        // Validasi email sederhana agar data kotor tidak masuk
-        if (rawEmail.includes('@') && rawEmail.length < 60 && !rawEmail.includes(' ')) {
-          obj.email = rawEmail;
-        }
-
-        let rawAddr = getVal(colIndex.address);
-        if (!rawAddr.startsWith('http') && rawAddr.length < 200) {
-           obj.address = rawAddr;
-        }
-
-        // Bersihkan nomor
-        const cleanNum = (n) => n ? n.replace(/[^0-9+]/g, '') : '';
-        obj.whatsapp = cleanNum(getVal(colIndex.wa));
-        obj.telephone = cleanNum(getVal(colIndex.telp));
-
-        // Validasi Akhir: Jangan masukkan baris jika perusahaan kosong/header ulang
-        if (obj.company && obj.company !== "Unknown" && obj.company.toLowerCase() !== 'nama perusahaan') {
-          results.push(obj);
-        }
+      let rawComp = getVal(colIndex.company);
+      if (rawComp.startsWith('http') || rawComp.includes('www.')) {
+         obj.website = rawComp; 
+         obj.company = "Unknown"; 
+      } else {
+         obj.company = rawComp;
       }
-    } catch (err) {
-      console.warn("Skipping bad line:", i);
+
+      obj.owner = getVal(colIndex.owner);
+      obj.country = getVal(colIndex.country);
+      obj.industry = getVal(colIndex.industry);
+      obj.instagram = getVal(colIndex.instagram);
+      obj.website = getVal(colIndex.website) || obj.website || '';
+
+      let rawEmail = getVal(colIndex.email);
+      if (rawEmail.includes('@') && rawEmail.length < 60 && !rawEmail.includes(' ')) obj.email = rawEmail;
+
+      let rawAddr = getVal(colIndex.address);
+      if (!rawAddr.startsWith('http') && rawAddr.length < 200) obj.address = rawAddr;
+
+      const cleanNum = (n) => n ? n.replace(/[^0-9+]/g, '') : '';
+      obj.whatsapp = cleanNum(getVal(colIndex.wa));
+      obj.telephone = cleanNum(getVal(colIndex.telp));
+
+      if (obj.company && obj.company !== "Unknown" && obj.company.toLowerCase() !== 'nama perusahaan') {
+        results.push(obj);
+      }
     }
   }
   return results;
 };
 
 const App = () => {
-  // State Management
   const [buyers, setBuyers] = useState(() => {
     try {
-      const saved = localStorage.getItem('export-crm-v12-stable');
+      const saved = localStorage.getItem('export-crm-v14');
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
@@ -161,24 +143,18 @@ const App = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedIds, setSelectedIds] = useState([]); 
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const fileInputRef = useRef(null);
 
-  // Timer Jam
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
 
-  // Auto Save
   useEffect(() => {
-    try {
-      localStorage.setItem('export-crm-v12-stable', JSON.stringify(buyers));
-    } catch (e) {
-      console.error("Storage error", e);
-    }
+    localStorage.setItem('export-crm-v14', JSON.stringify(buyers));
   }, [buyers]);
 
-  // Helper Timezone
   const getCountryTime = (countryName) => {
     if (!countryName) return null;
     try {
@@ -186,9 +162,9 @@ const App = () => {
       let offset = 0;
       if (c.includes('uae') || c.includes('arab') || c.includes('dubai')) offset = 4;
       else if (c.includes('indonesia') || c.includes('jakarta')) offset = 7;
-      else if (c.includes('italy') || c.includes('italia') || c.includes('rome') || c.includes('germany') || c.includes('france')) offset = 1;
+      else if (c.includes('italy') || c.includes('italia') || c.includes('rome') || c.includes('germany') || c.includes('france') || c.includes('spain') || c.includes('netherland')) offset = 1;
       else if (c.includes('uk') || c.includes('london')) offset = 0;
-      else if (c.includes('usa') || c.includes('ny')) offset = -5;
+      else if (c.includes('usa') || c.includes('ny') || c.includes('states')) offset = -5;
       else if (c.includes('china') || c.includes('singapore') || c.includes('hk')) offset = 8;
       else if (c.includes('japan') || c.includes('tokyo')) offset = 9;
       else if (c.includes('australia')) offset = 10;
@@ -204,11 +180,10 @@ const App = () => {
     company: "", owner: "", country: "", address: "", industry: "",
     whatsapp: "", telephone: "", email: "", website: "", instagram: "",
     status: "New Lead", interest: "Unknown",
-    lastContact: "", schedules: [], notes: ""
+    nextAction: "", notes: ""
   };
   const [formData, setFormData] = useState(emptyForm);
 
-  // --- STATS CALCULATION ---
   const stats = {
     total: buyers.length,
     new: buyers.filter(b => b.status === 'New Lead').length,
@@ -219,31 +194,18 @@ const App = () => {
     hot: buyers.filter(b => ['Hot', 'Warm'].includes(b.interest)).length,
   };
 
-  // --- REMINDER ---
-  const upcomingSchedules = (() => {
-    let all = [];
-    buyers.forEach(buyer => {
-      if (buyer.schedules && Array.isArray(buyer.schedules)) {
-        buyer.schedules.forEach(sch => {
-          const d = new Date(sch.date);
-          if (!isNaN(d.getTime()) && d >= new Date().setHours(0,0,0,0)) {
-            all.push({ ...sch, company: buyer.company, status: buyer.status, interest: buyer.interest, buyerId: buyer.id });
-          }
-        });
-      }
-    });
-    return all.sort((a, b) => new Date(a.date) - new Date(b.date));
-  })();
+  const upcomingSchedules = buyers
+    .filter(b => b.nextAction && new Date(b.nextAction) >= new Date().setHours(0,0,0,0))
+    .sort((a, b) => new Date(a.nextAction) - new Date(b.nextAction));
 
-  // --- COUNTRY STATS ---
   const countryStats = buyers.reduce((acc, curr) => {
     const country = curr.country ? curr.country.toUpperCase().trim() : 'UNKNOWN';
     if (country.length > 1 && country !== '-') acc[country] = (acc[country] || 0) + 1;
     return acc;
   }, {});
+
   const sortedCountries = Object.entries(countryStats).sort(([,a], [,b]) => b - a);
 
-  // --- SORTING & FILTERING ---
   const filteredAndSortedBuyers = buyers
     .filter(b => {
       const matchStatus = filterStatus === "All" || b.status === filterStatus;
@@ -256,18 +218,15 @@ const App = () => {
       const nameB = (b.company || '').trim();
       if (!nameA) return 1; 
       if (!nameB) return -1;
-
       const getPriority = (str) => {
         if (!str) return 3;
         const c = str.charAt(0);
-        if (/[0-9]/.test(c)) return 1; // 1. Angka
-        if (/[a-zA-Z]/.test(c)) return 2; // 2. Huruf
-        return 3; // 3. Simbol
+        if (/[0-9]/.test(c)) return 1; 
+        if (/[a-zA-Z]/.test(c)) return 2; 
+        return 3; 
       };
-
       const rankA = getPriority(nameA);
       const rankB = getPriority(nameB);
-
       if (rankA !== rankB) return rankA - rankB;
       return nameA.localeCompare(nameB, 'en', { numeric: true, sensitivity: 'base' });
     });
@@ -277,14 +236,11 @@ const App = () => {
     if (buyers.length === 0) return alert("Data kosong");
     const headers = ["ID","Nama Perusahaan","Owner","Industri","Negara","Alamat","WhatsApp","Telepon","Email","Website","Instagram","Status","Minat","Catatan", "Jadwal FollowUp"];
     const escape = (t) => t ? `"${String(t).replace(/"/g, '""')}"` : '';
-    
     const rows = [headers.join(','), ...buyers.map(b => [
       b.id, escape(b.company), escape(b.owner), escape(b.industry), escape(b.country), escape(b.address),
       escape(b.whatsapp), escape(b.telephone), escape(b.email), escape(b.website), escape(b.instagram),
-      escape(b.status), escape(b.interest), escape(b.notes),
-      escape(b.schedules ? b.schedules.map(s => `${s.date} (${s.note})`).join('; ') : '')
+      escape(b.status), escape(b.interest), escape(b.notes), escape(b.nextAction)
     ].join(','))];
-    
     const link = document.createElement("a");
     link.href = "data:text/csv;charset=utf-8," + encodeURI(rows.join("\n"));
     link.download = `CRM_Export_${new Date().toISOString().slice(0,10)}.csv`;
@@ -316,8 +272,8 @@ const App = () => {
     if(window.confirm('Hapus data ini?')) setBuyers(buyers.filter(b => b.id !== id));
   };
 
-  const handleStatusChange = (id, newStatus) => {
-    setBuyers(buyers.map(b => b.id === id ? { ...b, status: newStatus } : b));
+  const handleQuickUpdate = (id, field, value) => {
+    setBuyers(buyers.map(b => b.id === id ? { ...b, [field]: value } : b));
   };
 
   const handleSelectAll = (e) => {
@@ -342,58 +298,58 @@ const App = () => {
     }
   };
 
-  // Schedule handlers
-  const addSchedule = () => setFormData({ ...formData, schedules: [...(formData.schedules || []), { date: '', note: '' }] });
-  const removeSchedule = (index) => {
-    const newSched = [...(formData.schedules || [])];
-    newSched.splice(index, 1);
-    setFormData({ ...formData, schedules: newSched });
-  };
-  const updateSchedule = (index, field, value) => {
-    const newSched = [...(formData.schedules || [])];
-    newSched[index][field] = value;
-    setFormData({ ...formData, schedules: newSched });
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'New Lead': return 'bg-blue-100 text-blue-700 border-blue-200';
+      case 'Contacted': return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+      case 'Negotiating': return 'bg-purple-100 text-purple-700 border-purple-200';
+      case 'Closed': return 'bg-green-100 text-green-700 border-green-200';
+      case 'Lost': return 'bg-gray-100 text-gray-500 border-gray-200';
+      default: return 'bg-gray-50 text-gray-600';
+    }
   };
 
-  // UI Components
-  const InterestBadge = ({ interest }) => {
-    let color = 'bg-gray-100 text-gray-500';
-    let icon = null;
-    if (interest === 'Hot') { color = 'bg-red-100 text-red-600 border-red-200'; icon = <Icon name="flame" size={10}/>; }
-    if (interest === 'Warm') { color = 'bg-orange-100 text-orange-600 border-orange-200'; }
-    if (interest === 'Cold') { color = 'bg-blue-50 text-blue-400 border-blue-100'; icon = <Icon name="snowflake" size={10}/>; }
-    return <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border w-fit ${color}`}>{icon} {interest}</span>;
-  };
-
-  const StatusBadge = ({ status }) => {
-    const colors = { 'New Lead': 'bg-blue-100 text-blue-700', 'Contacted': 'bg-yellow-100 text-yellow-700', 'Negotiating': 'bg-purple-100 text-purple-700', 'Closed': 'bg-green-100 text-green-700', 'Lost': 'bg-gray-100 text-gray-500' };
-    return <span className={`px-2.5 py-1 rounded-full text-xs font-bold border whitespace-nowrap ${colors[status] || 'bg-gray-100'}`}>{status}</span>;
+  const getInterestColor = (interest) => {
+    if (interest === 'Hot') return 'bg-red-100 text-red-600 border-red-200';
+    if (interest === 'Warm') return 'bg-orange-100 text-orange-600 border-orange-200';
+    if (interest === 'Cold') return 'bg-blue-50 text-blue-400 border-blue-100';
+    return 'bg-gray-50 text-gray-500 border-gray-200';
   };
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden relative">
       
+      {/* MOBILE HEADER */}
+      <div className="md:hidden bg-white p-4 flex justify-between items-center shadow-sm z-30 fixed top-0 left-0 w-full">
+        <div className="font-bold text-blue-600 flex items-center gap-2"><Icon name="globe"/> ExportPro</div>
+        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 bg-slate-100 rounded"><Icon name="menu"/></button>
+      </div>
+
       {/* SIDEBAR */}
-      <div className="w-64 bg-slate-900 text-slate-300 flex flex-col shadow-xl z-20">
-        <div className="p-6 border-b border-slate-700">
+      <div className={`fixed inset-y-0 left-0 w-64 bg-slate-900 text-slate-300 flex flex-col shadow-xl z-40 transform transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="p-6 border-b border-slate-700 hidden md:block">
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Icon name="globe" className="text-blue-500" /> ExportPro
           </h1>
-          <p className="text-xs text-slate-500 mt-1">V12.2 Stable</p>
+          <p className="text-xs text-slate-500 mt-1">V14.0 Final Edition</p>
+        </div>
+        <div className="p-4 md:hidden border-b border-slate-700 flex justify-between items-center">
+           <span className="font-bold text-white">Menu</span>
+           <button onClick={() => setIsMobileMenuOpen(false)}><Icon name="x"/></button>
         </div>
         <nav className="flex-1 p-4 space-y-2">
-          <button onClick={() => setActiveTab('dashboard')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-800'}`}>
+          <button onClick={() => {setActiveTab('dashboard'); setIsMobileMenuOpen(false)}} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'dashboard' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-800'}`}>
             <Icon name="dashboard" /> Dashboard
           </button>
-          <button onClick={() => setActiveTab('database')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'database' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-800'}`}>
+          <button onClick={() => {setActiveTab('database'); setIsMobileMenuOpen(false)}} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'database' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-800'}`}>
             <Icon name="users" /> Database Buyer
           </button>
         </nav>
       </div>
 
       {/* MAIN CONTENT */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm">
+      <div className="flex-1 flex flex-col overflow-hidden mt-16 md:mt-0">
+        <header className="h-16 bg-white border-b border-slate-200 hidden md:flex items-center justify-between px-8 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-700">{activeTab === 'dashboard' ? 'Overview & Analytics' : 'Master Database Buyer'}</h2>
           <div className="flex items-center gap-2 bg-slate-100 px-3 py-1 rounded-full text-xs font-medium text-slate-600">
              <Icon name="clock" size={14} className="text-blue-500"/>
@@ -401,102 +357,107 @@ const App = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6 mb-16">
+        <main className="flex-1 overflow-y-auto p-4 md:p-6 mb-16">
           {activeTab === 'dashboard' && (
             <div className="space-y-6 animate-fade-in">
-              
               {/* REMINDER */}
               <div className="bg-white p-5 rounded-xl border border-blue-200 shadow-sm bg-gradient-to-r from-blue-50 to-white">
                 <h3 className="font-bold text-blue-800 mb-3 flex items-center gap-2"><Icon name="bell" className="text-blue-600"/> Jadwal Follow Up Terdekat</h3>
                 <div className="flex gap-4 overflow-x-auto pb-2">
                   {upcomingSchedules.length > 0 ? upcomingSchedules.map((item, idx) => (
-                    <div key={idx} className="min-w-[260px] bg-white p-3 rounded-lg border border-blue-100 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
+                    <div key={idx} className="min-w-[260px] bg-white p-3 rounded-lg border border-blue-100 shadow-sm hover:shadow-md transition-shadow relative">
                       <div className="flex justify-between items-start mb-1">
                          <div className="font-bold text-sm text-slate-700 truncate w-32" title={item.company}>{item.company}</div>
-                         <InterestBadge interest={item.interest} />
+                         <div className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                           <Icon name="user" size={10}/> {item.owner || 'No Name'}
+                         </div>
                       </div>
-                      <div className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium">
-                        <Icon name="calendar" size={12} className="text-blue-500"/> {item.date}
+                      <div className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium text-blue-600">
+                        <Icon name="calendar" size={12}/> {item.nextAction}
                       </div>
-                      <div className="text-[10px] text-slate-400 mt-1 ml-4 italic truncate">{item.note || "Follow up rutin"}</div>
-                      <div className="mt-2 text-[10px] bg-gray-50 text-gray-600 px-2 py-0.5 rounded w-fit border">{item.status}</div>
+                      <div className="mt-2 flex gap-2">
+                         <span className={`text-[9px] px-1.5 py-0.5 rounded border ${getStatusColor(item.status)}`}>{item.status}</span>
+                         <span className={`text-[9px] px-1.5 py-0.5 rounded border ${getInterestColor(item.interest)}`}>{item.interest}</span>
+                      </div>
                     </div>
                   )) : <div className="text-sm text-slate-400 italic">Tidak ada jadwal follow up mendatang.</div>}
                 </div>
               </div>
 
-              {/* STATS */}
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              {/* STATS CARDS */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4">
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-gray-400">
-                  <div className="text-slate-500 text-[10px] font-bold uppercase">Total Database</div>
-                  <div className="text-2xl font-bold text-slate-800 mt-1">{stats.total}</div>
+                  <div className="text-slate-500 text-[10px] font-bold uppercase">Total</div>
+                  <div className="text-xl md:text-2xl font-bold text-slate-800 mt-1">{stats.total}</div>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-red-500">
                   <div className="text-slate-500 text-[10px] font-bold uppercase">New Leads</div>
-                  <div className="text-2xl font-bold text-red-500 mt-1">{stats.new}</div>
+                  <div className="text-xl md:text-2xl font-bold text-red-500 mt-1">{stats.new}</div>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-yellow-500">
-                  <div className="text-slate-500 text-[10px] font-bold uppercase">Negotiating</div>
-                  <div className="text-2xl font-bold text-yellow-600 mt-1">{stats.negotiating}</div>
+                  <div className="text-slate-500 text-[10px] font-bold uppercase">Nego</div>
+                  <div className="text-xl md:text-2xl font-bold text-yellow-600 mt-1">{stats.negotiating}</div>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-green-500">
                   <div className="text-slate-500 text-[10px] font-bold uppercase">Closed</div>
-                  <div className="text-2xl font-bold text-green-600 mt-1">{stats.closed}</div>
+                  <div className="text-xl md:text-2xl font-bold text-green-600 mt-1">{stats.closed}</div>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm border-l-4 border-l-slate-500">
                   <div className="text-slate-500 text-[10px] font-bold uppercase">Lost</div>
-                  <div className="text-2xl font-bold text-slate-600 mt-1">{stats.lost}</div>
+                  <div className="text-xl md:text-2xl font-bold text-slate-600 mt-1">{stats.lost}</div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* FUNNEL CHART */}
+                {/* FUNNEL LENGKAP */}
                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                  <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2"><Icon name="chart" className="text-blue-500"/> Funnel Penjualan</h3>
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                       <div className="w-24 text-xs font-bold text-slate-500">TOTAL</div>
-                       <div className="flex-1 h-4 bg-blue-100 rounded-full overflow-hidden"><div className="h-full bg-blue-500" style={{width: '100%'}}></div></div>
-                       <div className="w-10 text-right font-bold text-xs">{stats.total}</div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                       <div className="w-24 text-xs font-bold text-slate-500">NEGOSIASI</div>
-                       <div className="flex-1 h-4 bg-yellow-100 rounded-full overflow-hidden"><div className="h-full bg-yellow-500" style={{width: stats.total ? `${(stats.negotiating/stats.total)*100}%` : '0%'}}></div></div>
-                       <div className="w-10 text-right font-bold text-xs">{stats.negotiating}</div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                       <div className="w-24 text-xs font-bold text-slate-500">CLOSING</div>
-                       <div className="flex-1 h-4 bg-green-100 rounded-full overflow-hidden"><div className="h-full bg-green-500" style={{width: stats.total ? `${(stats.closed/stats.total)*100}%` : '0%'}}></div></div>
-                       <div className="w-10 text-right font-bold text-xs">{stats.closed}</div>
-                    </div>
+                  <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Icon name="chart" className="text-blue-500"/> Funnel Lengkap</h3>
+                  <div className="space-y-3">
+                    {['Total', 'New Leads', 'Negotiating', 'Closed', 'Lost'].map((label, i) => {
+                        let val = 0;
+                        let color = 'gray';
+                        if(label === 'Total') { val = stats.total; color = 'blue'; }
+                        if(label === 'New Leads') { val = stats.new; color = 'red'; }
+                        if(label === 'Negotiating') { val = stats.negotiating; color = 'yellow'; }
+                        if(label === 'Closed') { val = stats.closed; color = 'green'; }
+                        if(label === 'Lost') { val = stats.lost; color = 'slate'; }
+
+                        return (
+                            <div key={i} className="flex items-center gap-3">
+                                <div className="w-24 text-xs font-bold text-slate-500 uppercase">{label}</div>
+                                <div className={`flex-1 h-3 bg-${color === 'slate' ? 'gray' : color}-100 rounded-full overflow-hidden`}>
+                                    <div className={`h-full bg-${color === 'slate' ? 'gray' : color}-500`} style={{width: stats.total ? `${(val/stats.total)*100}%` : '0%'}}></div>
+                                </div>
+                                <div className="w-10 text-right font-bold text-xs">{val}</div>
+                            </div>
+                        )
+                    })}
                   </div>
                 </div>
 
-                {/* COUNTRY DIAGRAM SCROLLABLE */}
-                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col h-[320px]">
-                   <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 flex-shrink-0"><Icon name="globe" className="text-purple-500"/> Dominasi Negara (All)</h3>
+                {/* COUNTRIES */}
+                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col h-[300px]">
+                   <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 flex-shrink-0"><Icon name="globe" className="text-purple-500"/> Lokasi Buyer</h3>
                    <div className="space-y-4 overflow-y-auto pr-2 flex-1">
-                    {sortedCountries.length > 0 ? sortedCountries.map(([country, count], i) => {
-                      const percentage = Math.round((count / stats.total) * 100) || 0;
-                      return (
+                    {sortedCountries.length > 0 ? sortedCountries.map(([country, count], i) => (
                         <div key={i} className="flex flex-col gap-1">
                           <div className="flex justify-between text-xs font-semibold text-slate-600">
                             <span>{country}</span>
-                            <span>{count} Buyer ({percentage}%)</span>
+                            <span>{count} ({Math.round((count / stats.total) * 100)}%)</span>
                           </div>
-                          <div className="h-3 w-full bg-slate-100 rounded-full overflow-hidden">
-                             <div className="h-full bg-purple-500 rounded-full transition-all duration-500" style={{width: `${percentage}%`}}></div>
+                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                             <div className="h-full bg-purple-500 rounded-full" style={{width: `${(count/stats.total)*100}%`}}></div>
                           </div>
                         </div>
-                      );
-                    }) : <div className="text-center text-slate-400 py-8 text-xs">Belum ada data negara.</div>}
+                    )) : <div className="text-center text-slate-400 py-8 text-xs">Belum ada data.</div>}
                    </div>
                 </div>
               </div>
 
-              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex gap-3">
+              {/* ACTIONS */}
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap gap-3">
                  <div onClick={() => fileInputRef.current.click()} className="cursor-pointer flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 border border-blue-200 text-sm font-bold"><Icon name="upload"/> Import CSV</div>
-                 <div onClick={handleExport} className="cursor-pointer flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 border border-green-200 text-sm font-bold"><Icon name="download"/> Download Report</div>
+                 <div onClick={handleExport} className="cursor-pointer flex items-center gap-2 px-4 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 border border-green-200 text-sm font-bold"><Icon name="download"/> Export CSV</div>
                  <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
               </div>
             </div>
@@ -504,22 +465,21 @@ const App = () => {
 
           {activeTab === 'database' && (
             <div className="bg-white rounded-xl border border-slate-200 flex flex-col h-full shadow-sm animate-fade-in">
-              <div className="p-4 border-b border-slate-200 flex justify-between gap-4 bg-white sticky top-0 z-20 rounded-t-xl">
+              <div className="p-4 border-b border-slate-200 flex flex-col md:flex-row justify-between gap-4 bg-white sticky top-0 z-20 rounded-t-xl">
                  <div className="flex gap-2 flex-1">
-                    <div className="relative flex-1 md:max-w-xs">
+                    <div className="relative flex-1">
                       <div className="absolute left-3 top-2.5 text-slate-400"><Icon name="search"/></div>
                       <input type="text" placeholder="Cari..." className="w-full pl-10 pr-4 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}/>
                     </div>
-                    <select className="px-3 py-2 border rounded-lg text-sm outline-none cursor-pointer" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-                      <option value="All">All Status</option>
-                      <option value="New Lead">New Lead</option>
+                    <select className="px-3 py-2 border rounded-lg text-sm outline-none cursor-pointer bg-white" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                      <option value="All">All</option>
+                      <option value="New Lead">New</option>
                       <option value="Contacted">Contacted</option>
-                      <option value="Negotiating">Negotiating</option>
+                      <option value="Negotiating">Nego</option>
                       <option value="Closed">Closed</option>
-                      <option value="Lost">Lost</option>
                     </select>
                  </div>
-                 <button onClick={() => { setFormData(emptyForm); setIsEditing(false); setIsModalOpen(true); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-blue-700"><Icon name="plus"/> Tambah</button>
+                 <button onClick={() => { setFormData(emptyForm); setIsEditing(false); setIsModalOpen(true); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-700"><Icon name="plus"/> <span className="hidden md:inline">Tambah</span></button>
               </div>
 
               <div className="flex-1 overflow-auto">
@@ -527,12 +487,12 @@ const App = () => {
                   <thead className="bg-slate-50 sticky top-0 z-10 text-xs font-bold text-slate-500 uppercase tracking-wider">
                     <tr>
                       <th className="p-4 w-10 border-b text-center"><input type="checkbox" onChange={handleSelectAll} checked={filteredAndSortedBuyers.length > 0 && selectedIds.length === filteredAndSortedBuyers.length} className="cursor-pointer"/></th>
-                      <th className="p-4 w-10 border-b text-center">No</th>
+                      <th className="p-4 w-10 border-b text-center hidden md:table-cell">No</th>
                       <th className="p-4 border-b">Perusahaan</th>
-                      <th className="p-4 border-b">Lokasi & Waktu</th>
-                      <th className="p-4 border-b">Kontak</th>
+                      <th className="p-4 border-b hidden md:table-cell">Lokasi</th>
+                      <th className="p-4 border-b hidden md:table-cell">Kontak</th>
                       <th className="p-4 border-b">Medsos & Web</th>
-                      <th className="p-4 border-b">Status & Jadwal</th>
+                      <th className="p-4 border-b">Status</th>
                       <th className="p-4 border-b text-right">Aksi</th>
                     </tr>
                   </thead>
@@ -540,46 +500,43 @@ const App = () => {
                     {filteredAndSortedBuyers.map((buyer, index) => (
                       <tr key={buyer.id} className={`hover:bg-blue-50/30 group ${selectedIds.includes(buyer.id) ? 'bg-blue-50' : ''}`}>
                         <td className="p-4 align-top text-center"><input type="checkbox" checked={selectedIds.includes(buyer.id)} onChange={() => handleSelectOne(buyer.id)} className="cursor-pointer"/></td>
-                        <td className="p-4 align-top text-center text-slate-400 font-mono text-xs">{index + 1}</td>
+                        <td className="p-4 align-top text-center text-slate-400 font-mono text-xs hidden md:table-cell">{index + 1}</td>
                         
-                        {/* PERUSAHAAN */}
-                        <td className="p-4 align-top max-w-[220px]">
+                        {/* PERUSAHAAN (Mobile Friendly) */}
+                        <td className="p-4 align-top max-w-[200px]">
                           <div className="font-bold text-slate-800 text-base">{buyer.company || '-'}</div>
                           <div className="text-xs font-medium text-slate-500 mt-1">{buyer.owner || '-'}</div>
-                          {buyer.industry && <div className="mt-2 inline-block px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] border border-slate-200">{buyer.industry}</div>}
+                          {/* Mobile View Extras */}
+                          <div className="md:hidden mt-2 space-y-1">
+                             <div className="text-xs flex items-center gap-1"><Icon name="globe" size={10}/> {buyer.country}</div>
+                             <div className="text-xs flex items-center gap-1 text-green-600"><Icon name="whatsapp" size={10}/> {buyer.whatsapp || '-'}</div>
+                          </div>
                         </td>
 
-                        {/* LOKASI & JAM */}
-                        <td className="p-4 align-top max-w-[180px]">
+                        {/* LOKASI (Desktop) */}
+                        <td className="p-4 align-top max-w-[150px] hidden md:table-cell">
                           <div className="font-bold text-slate-700 flex items-center gap-1 mb-1 text-xs uppercase">
                              <Icon name="globe" size={12} className="text-blue-400"/> {buyer.country || '-'}
                           </div>
                           {buyer.country && (
-                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-100 mb-2 shadow-sm">
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-100 mb-1">
                                <Icon name="clock" size={10}/> {getCountryTime(buyer.country) || '--:--'}
                             </div>
                           )}
-                          <div className="text-xs text-slate-500 leading-relaxed">
-                            {buyer.address && !buyer.address.includes('http') ? buyer.address : '-'}
-                          </div>
                         </td>
 
-                        {/* KONTAK */}
-                        <td className="p-4 align-top min-w-[160px]">
+                        {/* KONTAK (Desktop) */}
+                        <td className="p-4 align-top min-w-[160px] hidden md:table-cell">
                            <div className="space-y-2">
                               <div className="flex items-center gap-2 text-xs">
                                  <Icon name="whatsapp" size={14} className="text-green-600"/>
                                  {buyer.whatsapp ? (
                                    <a href={`https://wa.me/${buyer.whatsapp.replace(/[^0-9]/g, '')}`} target="_blank" className="font-bold text-green-700 hover:underline">{buyer.whatsapp}</a>
-                                 ) : <span className="text-slate-300 italic">No WA</span>}
+                                 ) : <span className="text-slate-300">-</span>}
                               </div>
                               <div className="flex items-center gap-2 text-xs">
-                                 <Icon name="phone" size={14} className="text-slate-400"/>
-                                 {buyer.telephone ? <span className="text-slate-600 font-mono">{buyer.telephone}</span> : <span className="text-slate-300 italic">No Telp</span>}
-                              </div>
-                              <div className="flex items-center gap-2 text-xs pt-2 border-t border-slate-100 mt-1">
                                  <Icon name="mail" size={14} className="text-blue-500"/>
-                                 {buyer.email ? <a href={`mailto:${buyer.email}`} className="text-blue-600 hover:underline truncate w-32 block">{buyer.email}</a> : <span className="text-slate-300">-</span>}
+                                 {buyer.email ? <a href={`mailto:${buyer.email}`} className="text-blue-600 hover:underline truncate w-28 block">{buyer.email}</a> : <span className="text-slate-300">-</span>}
                               </div>
                            </div>
                         </td>
@@ -601,13 +558,14 @@ const App = () => {
                            </div>
                         </td>
 
-                        {/* STATUS */}
-                        <td className="p-4 align-top min-w-[160px]">
+                        {/* QUICK EDIT COLUMNS */}
+                        <td className="p-4 align-top min-w-[140px]">
                           <div className="flex flex-col gap-2">
+                            {/* Status Select */}
                             <select 
                               value={buyer.status}
-                              onChange={(e) => handleStatusChange(buyer.id, e.target.value)}
-                              className="text-xs font-bold px-2 py-1.5 rounded-full border outline-none cursor-pointer appearance-none text-center w-full bg-white border-slate-200"
+                              onChange={(e) => handleQuickUpdate(buyer.id, 'status', e.target.value)}
+                              className={`text-[10px] font-bold px-2 py-1 rounded border cursor-pointer w-full appearance-none text-center ${getStatusColor(buyer.status)}`}
                             >
                               <option value="New Lead">New Lead</option>
                               <option value="Contacted">Contacted</option>
@@ -616,42 +574,30 @@ const App = () => {
                               <option value="Lost">Lost</option>
                             </select>
 
-                            {/* Status Badge Visual */}
-                            <div className="flex justify-center">
-                                <StatusBadge status={buyer.status} />
-                            </div>
-
-                            {/* INTEREST */}
-                            <div className="flex justify-center">
-                               <InterestBadge interest={buyer.interest} />
-                            </div>
+                            {/* Interest Select */}
+                            <select 
+                               value={buyer.interest}
+                               onChange={(e) => handleQuickUpdate(buyer.id, 'interest', e.target.value)}
+                               className={`text-[10px] font-bold px-2 py-1 rounded border cursor-pointer w-full appearance-none text-center ${getInterestColor(buyer.interest)}`}
+                            >
+                               <option value="Unknown">Unknown</option>
+                               <option value="Cold">Cold</option>
+                               <option value="Warm">Warm</option>
+                               <option value="Hot">Hot</option>
+                            </select>
                             
-                            {/* JADWAL */}
-                            {buyer.schedules && buyer.schedules.length > 0 ? (
-                              <div className="flex flex-col gap-1 mt-1">
-                                {buyer.schedules
-                                  .filter(s => {
-                                    const d = new Date(s.date);
-                                    return !isNaN(d.getTime()) && d >= new Date().setHours(0,0,0,0);
-                                  })
-                                  .sort((a,b) => new Date(a.date) - new Date(b.date))
-                                  .slice(0, 2) 
-                                  .map((s, idx) => (
-                                    <div key={idx} className="flex items-start gap-1 text-[10px] bg-orange-50 text-orange-700 px-2 py-1 rounded border border-orange-100">
-                                       <Icon name="calendar" size={10} className="mt-0.5 flex-shrink-0"/> 
-                                       <div className="flex flex-col leading-tight">
-                                          <span className="font-bold">{s.date}</span>
-                                          <span className="text-[9px] opacity-80 truncate w-24">{s.note}</span>
-                                       </div>
-                                    </div>
-                                ))}
-                                {buyer.schedules.length > 2 && <span className="text-[9px] text-slate-400 text-center">+ {buyer.schedules.length - 2} jadwal lain</span>}
-                              </div>
-                            ) : <span className="text-[10px] text-slate-300 text-center italic mt-1">-- No Schedule --</span>}
+                            {/* Date Input Direct */}
+                            <div className="relative">
+                               <input 
+                                 type="date" 
+                                 className="w-full text-[10px] p-1 border rounded bg-slate-50 text-slate-600"
+                                 value={buyer.nextAction || ''}
+                                 onChange={(e) => handleQuickUpdate(buyer.id, 'nextAction', e.target.value)}
+                               />
+                            </div>
                           </div>
                         </td>
 
-                        {/* AKSI */}
                         <td className="p-4 align-top text-right">
                           <div className="flex justify-end gap-1">
                              <button onClick={() => { setFormData(buyer); setIsEditing(true); setIsModalOpen(true); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><Icon name="edit"/></button>
@@ -670,16 +616,14 @@ const App = () => {
 
       {/* FLOATING BULK ACTION BAR */}
       {selectedIds.length > 0 && (
-        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4 z-50 animate-bounce-in">
-          <span className="font-bold text-sm bg-white text-slate-900 px-2 rounded">{selectedIds.length} Dipilih</span>
+        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-4 py-3 rounded-full shadow-2xl flex items-center gap-3 z-50 animate-bounce-in w-max max-w-[90%] overflow-x-auto">
+          <span className="font-bold text-sm whitespace-nowrap">{selectedIds.length} Dipilih</span>
           <div className="h-4 w-px bg-slate-600"></div>
-          <button onClick={() => handleBulkStatus('New Lead')} className="text-xs hover:text-blue-300 font-medium">New</button>
-          <button onClick={() => handleBulkStatus('Contacted')} className="text-xs hover:text-yellow-300 font-medium">Contacted</button>
-          <button onClick={() => handleBulkStatus('Negotiating')} className="text-xs hover:text-purple-300 font-medium">Nego</button>
-          <button onClick={() => handleBulkStatus('Closed')} className="text-xs hover:text-green-300 font-medium">Closed</button>
+          <button onClick={() => handleBulkStatus('Contacted')} className="text-xs hover:text-yellow-300 whitespace-nowrap">Set Contacted</button>
+          <button onClick={() => handleBulkStatus('Closed')} className="text-xs hover:text-green-300 whitespace-nowrap">Set Closed</button>
           <div className="h-4 w-px bg-slate-600"></div>
-          <button onClick={handleBulkDelete} className="text-xs font-bold text-red-400 hover:text-red-300 flex items-center gap-1"><Icon name="trash" size={14}/> Hapus</button>
-          <button onClick={() => setSelectedIds([])} className="ml-2 hover:text-gray-300"><Icon name="x"/></button>
+          <button onClick={handleBulkDelete} className="text-xs font-bold text-red-400 hover:text-red-300 flex items-center gap-1 whitespace-nowrap"><Icon name="trash" size={14}/> Hapus</button>
+          <button onClick={() => setSelectedIds([])} className="ml-1"><Icon name="x"/></button>
         </div>
       )}
 
@@ -711,20 +655,7 @@ const App = () => {
                
                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Minat</label><select className="w-full mt-1 p-2 border rounded" value={formData.interest} onChange={e=>setFormData({...formData, interest:e.target.value})}><option>Unknown</option><option>Cold</option><option>Warm</option><option>Hot</option></select></div>
 
-               <div className="md:col-span-2 border-t pt-2 mt-2">
-                 <div className="flex justify-between items-center mb-2">
-                    <label className="text-xs font-bold text-blue-600 uppercase">Jadwal Follow Up</label>
-                    <button type="button" onClick={addSchedule} className="text-xs text-blue-600 hover:underline font-bold">+ Tambah Jadwal</button>
-                 </div>
-                 {formData.schedules && formData.schedules.map((sched, idx) => (
-                   <div key={idx} className="flex gap-2 mb-2 items-center">
-                      <input type="date" className="p-2 border rounded text-sm" value={sched.date} onChange={e => updateSchedule(idx, 'date', e.target.value)} />
-                      <input type="text" className="p-2 border rounded text-sm flex-1" placeholder="Catatan (misal: Zoom meeting)" value={sched.note} onChange={e => updateSchedule(idx, 'note', e.target.value)} />
-                      <button type="button" onClick={() => removeSchedule(idx)} className="text-red-500 hover:text-red-700"><Icon name="trash" size={14}/></button>
-                   </div>
-                 ))}
-                 {(!formData.schedules || formData.schedules.length === 0) && <div className="text-xs text-slate-400 italic">Belum ada jadwal. Klik tambah untuk membuat pengingat.</div>}
-               </div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Jadwal Follow Up</label><input type="date" className="w-full mt-1 p-2 border rounded" value={formData.nextAction} onChange={e=>setFormData({...formData, nextAction:e.target.value})}/></div>
 
                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Catatan Umum</label><textarea rows="3" className="w-full mt-1 p-2 border rounded" value={formData.notes} onChange={e=>setFormData({...formData, notes:e.target.value})}/></div>
                <div className="md:col-span-2 flex justify-end gap-3 mt-4"><button type="button" onClick={()=>setIsModalOpen(false)} className="px-4 py-2 bg-slate-100 rounded">Batal</button><button type="submit" className="px-6 py-2 bg-blue-600 text-white rounded font-bold">Simpan</button></div>
