@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// --- BAGIAN IKON (Internal SVG - Stabil) ---
+// --- BAGIAN IKON (Internal SVG - Stabil & Lengkap) ---
 const Icon = ({ name, size = 16, className = "" }) => {
   let content;
   switch (name) {
@@ -29,6 +29,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
     case 'snowflake': content = <><path d="M2 12h20"/><path d="M12 2v20"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/><path d="m16 4-4 4-4-4"/><path d="m8 20 4-4 4 4"/></>; break;
     case 'menu': content = <><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="18" y2="18"/></>; break;
     case 'user': content = <><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>; break;
+    case 'link': content = <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>; break;
     default: content = <circle cx="12" cy="12" r="10"/>;
   }
 
@@ -39,7 +40,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
   );
 };
 
-// --- LOGIKA IMPORT CSV (Anti-Crash) ---
+// --- LOGIKA IMPORT CSV ---
 const parseCSV = (text) => {
   const lines = text.split(/\r\n|\n/);
   if (lines.length < 1) return [];
@@ -90,7 +91,7 @@ const parseCSV = (text) => {
         id: baseId + i + Math.random(),
         status: 'New Lead',
         interest: 'Unknown',
-        nextAction: '',
+        schedules: [], // Multi-schedule array
         company: '', owner: '', country: '', address: '', whatsapp: '', telephone: '', email: '', website: '', instagram: '', industry: '', notes: ''
       };
 
@@ -116,6 +117,7 @@ const parseCSV = (text) => {
       let rawAddr = getVal(colIndex.address);
       if (!rawAddr.startsWith('http') && rawAddr.length < 200) obj.address = rawAddr;
 
+      // PISAHKAN WA DAN TELP
       const cleanNum = (n) => n ? n.replace(/[^0-9+]/g, '') : '';
       obj.whatsapp = cleanNum(getVal(colIndex.wa));
       obj.telephone = cleanNum(getVal(colIndex.telp));
@@ -131,7 +133,7 @@ const parseCSV = (text) => {
 const App = () => {
   const [buyers, setBuyers] = useState(() => {
     try {
-      const saved = localStorage.getItem('export-crm-v14');
+      const saved = localStorage.getItem('export-crm-v15');
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
@@ -152,7 +154,7 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('export-crm-v14', JSON.stringify(buyers));
+    localStorage.setItem('export-crm-v15', JSON.stringify(buyers));
   }, [buyers]);
 
   const getCountryTime = (countryName) => {
@@ -180,7 +182,7 @@ const App = () => {
     company: "", owner: "", country: "", address: "", industry: "",
     whatsapp: "", telephone: "", email: "", website: "", instagram: "",
     status: "New Lead", interest: "Unknown",
-    nextAction: "", notes: ""
+    schedules: [], notes: ""
   };
   const [formData, setFormData] = useState(emptyForm);
 
@@ -194,9 +196,20 @@ const App = () => {
     hot: buyers.filter(b => ['Hot', 'Warm'].includes(b.interest)).length,
   };
 
-  const upcomingSchedules = buyers
-    .filter(b => b.nextAction && new Date(b.nextAction) >= new Date().setHours(0,0,0,0))
-    .sort((a, b) => new Date(a.nextAction) - new Date(b.nextAction));
+  // Reminder Logic (Multi Schedule)
+  const upcomingSchedules = (() => {
+    let all = [];
+    buyers.forEach(buyer => {
+      if (buyer.schedules && Array.isArray(buyer.schedules)) {
+        buyer.schedules.forEach(sch => {
+          if (new Date(sch.date) >= new Date().setHours(0,0,0,0)) {
+            all.push({ ...sch, company: buyer.company, status: buyer.status, interest: buyer.interest, owner: buyer.owner, buyerId: buyer.id });
+          }
+        });
+      }
+    });
+    return all.sort((a, b) => new Date(a.date) - new Date(b.date));
+  })();
 
   const countryStats = buyers.reduce((acc, curr) => {
     const country = curr.country ? curr.country.toUpperCase().trim() : 'UNKNOWN';
@@ -231,7 +244,6 @@ const App = () => {
       return nameA.localeCompare(nameB, 'en', { numeric: true, sensitivity: 'base' });
     });
 
-  // --- HANDLERS ---
   const handleExport = () => {
     if (buyers.length === 0) return alert("Data kosong");
     const headers = ["ID","Nama Perusahaan","Owner","Industri","Negara","Alamat","WhatsApp","Telepon","Email","Website","Instagram","Status","Minat","Catatan", "Jadwal FollowUp"];
@@ -239,7 +251,8 @@ const App = () => {
     const rows = [headers.join(','), ...buyers.map(b => [
       b.id, escape(b.company), escape(b.owner), escape(b.industry), escape(b.country), escape(b.address),
       escape(b.whatsapp), escape(b.telephone), escape(b.email), escape(b.website), escape(b.instagram),
-      escape(b.status), escape(b.interest), escape(b.notes), escape(b.nextAction)
+      escape(b.status), escape(b.interest), escape(b.notes), 
+      escape(b.schedules ? b.schedules.map(s => `${s.date} (${s.note})`).join('; ') : '')
     ].join(','))];
     const link = document.createElement("a");
     link.href = "data:text/csv;charset=utf-8," + encodeURI(rows.join("\n"));
@@ -298,6 +311,25 @@ const App = () => {
     }
   };
 
+  const addSchedule = () => {
+    setFormData({
+      ...formData,
+      schedules: [...(formData.schedules || []), { date: '', note: '' }]
+    });
+  };
+
+  const removeSchedule = (index) => {
+    const newSched = [...(formData.schedules || [])];
+    newSched.splice(index, 1);
+    setFormData({ ...formData, schedules: newSched });
+  };
+
+  const updateSchedule = (index, field, value) => {
+    const newSched = [...(formData.schedules || [])];
+    newSched[index][field] = value;
+    setFormData({ ...formData, schedules: newSched });
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'New Lead': return 'bg-blue-100 text-blue-700 border-blue-200';
@@ -331,7 +363,7 @@ const App = () => {
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Icon name="globe" className="text-blue-500" /> ExportPro
           </h1>
-          <p className="text-xs text-slate-500 mt-1">V14.0 Final Edition</p>
+          <p className="text-xs text-slate-500 mt-1">V15.0 Ultimate</p>
         </div>
         <div className="p-4 md:hidden border-b border-slate-700 flex justify-between items-center">
            <span className="font-bold text-white">Menu</span>
@@ -373,8 +405,9 @@ const App = () => {
                          </div>
                       </div>
                       <div className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium text-blue-600">
-                        <Icon name="calendar" size={12}/> {item.nextAction}
+                        <Icon name="calendar" size={12}/> {item.date}
                       </div>
+                      <div className="text-[10px] text-slate-400 mt-1 ml-4 italic truncate">{item.note || "Follow up rutin"}</div>
                       <div className="mt-2 flex gap-2">
                          <span className={`text-[9px] px-1.5 py-0.5 rounded border ${getStatusColor(item.status)}`}>{item.status}</span>
                          <span className={`text-[9px] px-1.5 py-0.5 rounded border ${getInterestColor(item.interest)}`}>{item.interest}</span>
@@ -502,10 +535,11 @@ const App = () => {
                         <td className="p-4 align-top text-center"><input type="checkbox" checked={selectedIds.includes(buyer.id)} onChange={() => handleSelectOne(buyer.id)} className="cursor-pointer"/></td>
                         <td className="p-4 align-top text-center text-slate-400 font-mono text-xs hidden md:table-cell">{index + 1}</td>
                         
-                        {/* PERUSAHAAN (Mobile Friendly) */}
+                        {/* PERUSAHAAN */}
                         <td className="p-4 align-top max-w-[200px]">
                           <div className="font-bold text-slate-800 text-base">{buyer.company || '-'}</div>
                           <div className="text-xs font-medium text-slate-500 mt-1">{buyer.owner || '-'}</div>
+                          {buyer.industry && <div className="mt-1 text-[10px] text-slate-400">{buyer.industry}</div>}
                           {/* Mobile View Extras */}
                           <div className="md:hidden mt-2 space-y-1">
                              <div className="text-xs flex items-center gap-1"><Icon name="globe" size={10}/> {buyer.country}</div>
@@ -513,28 +547,39 @@ const App = () => {
                           </div>
                         </td>
 
-                        {/* LOKASI (Desktop) */}
-                        <td className="p-4 align-top max-w-[150px] hidden md:table-cell">
+                        {/* LOKASI & ALAMAT LENGKAP */}
+                        <td className="p-4 align-top max-w-[180px] hidden md:table-cell">
                           <div className="font-bold text-slate-700 flex items-center gap-1 mb-1 text-xs uppercase">
                              <Icon name="globe" size={12} className="text-blue-400"/> {buyer.country || '-'}
                           </div>
                           {buyer.country && (
-                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-100 mb-1">
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-100 mb-2">
                                <Icon name="clock" size={10}/> {getCountryTime(buyer.country) || '--:--'}
                             </div>
                           )}
+                          {/* ALAMAT LENGKAP DITAMPILKAN DISINI */}
+                          <div className="text-xs text-slate-500 leading-relaxed line-clamp-3 hover:line-clamp-none transition-all cursor-pointer" title={buyer.address}>
+                            {buyer.address && !buyer.address.includes('http') ? buyer.address : '-'}
+                          </div>
                         </td>
 
-                        {/* KONTAK (Desktop) */}
+                        {/* KONTAK TERPISAH (WA / TELP / EMAIL) */}
                         <td className="p-4 align-top min-w-[160px] hidden md:table-cell">
                            <div className="space-y-2">
+                              {/* WHATSAPP */}
                               <div className="flex items-center gap-2 text-xs">
                                  <Icon name="whatsapp" size={14} className="text-green-600"/>
                                  {buyer.whatsapp ? (
                                    <a href={`https://wa.me/${buyer.whatsapp.replace(/[^0-9]/g, '')}`} target="_blank" className="font-bold text-green-700 hover:underline">{buyer.whatsapp}</a>
-                                 ) : <span className="text-slate-300">-</span>}
+                                 ) : <span className="text-slate-300 italic">No WA</span>}
                               </div>
+                              {/* TELEPON KANTOR */}
                               <div className="flex items-center gap-2 text-xs">
+                                 <Icon name="phone" size={14} className="text-slate-400"/>
+                                 {buyer.telephone ? <span className="text-slate-600 font-mono">{buyer.telephone}</span> : <span className="text-slate-300 italic">No Telp</span>}
+                              </div>
+                              {/* EMAIL */}
+                              <div className="flex items-center gap-2 text-xs pt-2 border-t border-slate-100 mt-1">
                                  <Icon name="mail" size={14} className="text-blue-500"/>
                                  {buyer.email ? <a href={`mailto:${buyer.email}`} className="text-blue-600 hover:underline truncate w-28 block">{buyer.email}</a> : <span className="text-slate-300">-</span>}
                               </div>
@@ -558,7 +603,7 @@ const App = () => {
                            </div>
                         </td>
 
-                        {/* QUICK EDIT COLUMNS */}
+                        {/* STATUS */}
                         <td className="p-4 align-top min-w-[140px]">
                           <div className="flex flex-col gap-2">
                             {/* Status Select */}
@@ -586,15 +631,28 @@ const App = () => {
                                <option value="Hot">Hot</option>
                             </select>
                             
-                            {/* Date Input Direct */}
-                            <div className="relative">
-                               <input 
-                                 type="date" 
-                                 className="w-full text-[10px] p-1 border rounded bg-slate-50 text-slate-600"
-                                 value={buyer.nextAction || ''}
-                                 onChange={(e) => handleQuickUpdate(buyer.id, 'nextAction', e.target.value)}
-                               />
-                            </div>
+                            {/* MULTI JADWAL LIST */}
+                            {buyer.schedules && buyer.schedules.length > 0 ? (
+                              <div className="flex flex-col gap-1 mt-1">
+                                {buyer.schedules
+                                  .filter(s => {
+                                    const d = new Date(s.date);
+                                    return !isNaN(d.getTime()) && d >= new Date().setHours(0,0,0,0);
+                                  })
+                                  .sort((a,b) => new Date(a.date) - new Date(b.date))
+                                  .slice(0, 2) 
+                                  .map((s, idx) => (
+                                    <div key={idx} className="flex items-start gap-1 text-[10px] bg-orange-50 text-orange-700 px-2 py-1 rounded border border-orange-100">
+                                       <Icon name="calendar" size={10} className="mt-0.5 flex-shrink-0"/> 
+                                       <div className="flex flex-col leading-tight">
+                                          <span className="font-bold">{s.date}</span>
+                                          <span className="text-[9px] opacity-80 truncate w-24">{s.note}</span>
+                                       </div>
+                                    </div>
+                                ))}
+                                {buyer.schedules.length > 2 && <span className="text-[9px] text-slate-400 text-center">+ {buyer.schedules.length - 2} jadwal lain</span>}
+                              </div>
+                            ) : <span className="text-[10px] text-slate-300 text-center italic mt-1">-- No Schedule --</span>}
                           </div>
                         </td>
 
@@ -655,7 +713,20 @@ const App = () => {
                
                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Minat</label><select className="w-full mt-1 p-2 border rounded" value={formData.interest} onChange={e=>setFormData({...formData, interest:e.target.value})}><option>Unknown</option><option>Cold</option><option>Warm</option><option>Hot</option></select></div>
 
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Jadwal Follow Up</label><input type="date" className="w-full mt-1 p-2 border rounded" value={formData.nextAction} onChange={e=>setFormData({...formData, nextAction:e.target.value})}/></div>
+               <div className="md:col-span-2 border-t pt-2 mt-2">
+                 <div className="flex justify-between items-center mb-2">
+                    <label className="text-xs font-bold text-blue-600 uppercase">Jadwal Follow Up</label>
+                    <button type="button" onClick={addSchedule} className="text-xs text-blue-600 hover:underline font-bold">+ Tambah Jadwal</button>
+                 </div>
+                 {formData.schedules && formData.schedules.map((sched, idx) => (
+                   <div key={idx} className="flex gap-2 mb-2 items-center">
+                      <input type="date" className="p-2 border rounded text-sm" value={sched.date} onChange={e => updateSchedule(idx, 'date', e.target.value)} />
+                      <input type="text" className="p-2 border rounded text-sm flex-1" placeholder="Catatan (misal: Zoom meeting)" value={sched.note} onChange={e => updateSchedule(idx, 'note', e.target.value)} />
+                      <button type="button" onClick={() => removeSchedule(idx)} className="text-red-500 hover:text-red-700"><Icon name="trash" size={14}/></button>
+                   </div>
+                 ))}
+                 {(!formData.schedules || formData.schedules.length === 0) && <div className="text-xs text-slate-400 italic">Belum ada jadwal. Klik tambah untuk membuat pengingat.</div>}
+               </div>
 
                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Catatan Umum</label><textarea rows="3" className="w-full mt-1 p-2 border rounded" value={formData.notes} onChange={e=>setFormData({...formData, notes:e.target.value})}/></div>
                <div className="md:col-span-2 flex justify-end gap-3 mt-4"><button type="button" onClick={()=>setIsModalOpen(false)} className="px-4 py-2 bg-slate-100 rounded">Batal</button><button type="submit" className="px-6 py-2 bg-blue-600 text-white rounded font-bold">Simpan</button></div>
