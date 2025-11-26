@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// --- BAGIAN IKON (Internal SVG - Stabil & Lengkap) ---
+// --- BAGIAN IKON ---
 const Icon = ({ name, size = 16, className = "" }) => {
   let content;
   switch (name) {
@@ -24,6 +24,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
     case 'clock': content = <circle cx="12" cy="12" r="10"><polyline points="12 6 12 12 16 14"/></circle>; break;
     case 'chart': content = <><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></>; break;
     case 'instagram': content = <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>; break;
+    case 'tiktok': content = <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/>; break;
     case 'bell': content = <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>; break;
     case 'flame': content = <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>; break;
     case 'snowflake': content = <><path d="M2 12h20"/><path d="M12 2v20"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/><path d="m16 4-4 4-4-4"/><path d="m8 20 4-4 4 4"/></>; break;
@@ -71,6 +72,7 @@ const parseCSV = (text) => {
     wa: detectedHeaders.findIndex(h => h.includes('whatsapp') || h.includes('wa')),
     telp: detectedHeaders.findIndex(h => h.includes('no telp') || h.includes('telephone') || h.includes('phone')),
     instagram: detectedHeaders.findIndex(h => h.includes('instagram') || h.includes('ig') || h.includes('sosmed')),
+    tiktok: detectedHeaders.findIndex(h => h.includes('tiktok') || h.includes('tik tok')),
     country: detectedHeaders.findIndex(h => h.includes('negara')),
     address: detectedHeaders.findIndex(h => h.includes('alamat') || h.includes('address') || h.includes('lokasi')),
     industry: detectedHeaders.findIndex(h => h.includes('keterangan') || h.includes('bidang') || h.includes('produk'))
@@ -91,8 +93,9 @@ const parseCSV = (text) => {
         id: baseId + i + Math.random(),
         status: 'New Lead',
         interest: 'Unknown',
-        schedules: [], // Multi-schedule array
-        company: '', owner: '', country: '', address: '', whatsapp: '', telephone: '', email: '', website: '', instagram: '', industry: '', notes: ''
+        nextAction: '',
+        schedules: [],
+        company: '', owner: '', country: '', address: '', whatsapp: '', telephone: '', email: '', website: '', instagram: '', tiktok: '', industry: '', notes: ''
       };
 
       const getVal = (idx) => (idx > -1 && cleanRow[idx] && cleanRow[idx] !== '-') ? cleanRow[idx] : '';
@@ -109,6 +112,7 @@ const parseCSV = (text) => {
       obj.country = getVal(colIndex.country);
       obj.industry = getVal(colIndex.industry);
       obj.instagram = getVal(colIndex.instagram);
+      obj.tiktok = getVal(colIndex.tiktok);
       obj.website = getVal(colIndex.website) || obj.website || '';
 
       let rawEmail = getVal(colIndex.email);
@@ -117,7 +121,6 @@ const parseCSV = (text) => {
       let rawAddr = getVal(colIndex.address);
       if (!rawAddr.startsWith('http') && rawAddr.length < 200) obj.address = rawAddr;
 
-      // PISAHKAN WA DAN TELP
       const cleanNum = (n) => n ? n.replace(/[^0-9+]/g, '') : '';
       obj.whatsapp = cleanNum(getVal(colIndex.wa));
       obj.telephone = cleanNum(getVal(colIndex.telp));
@@ -133,7 +136,7 @@ const parseCSV = (text) => {
 const App = () => {
   const [buyers, setBuyers] = useState(() => {
     try {
-      const saved = localStorage.getItem('export-crm-v15');
+      const saved = localStorage.getItem('export-crm-v16');
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
@@ -146,6 +149,11 @@ const App = () => {
   const [selectedIds, setSelectedIds] = useState([]); 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  
+  // QUICK SCHEDULE MODAL STATE
+  const [quickScheduleBuyerId, setQuickScheduleBuyerId] = useState(null);
+  const [quickScheduleData, setQuickScheduleData] = useState({ date: '', note: '' });
+
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -154,7 +162,7 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('export-crm-v15', JSON.stringify(buyers));
+    localStorage.setItem('export-crm-v16', JSON.stringify(buyers));
   }, [buyers]);
 
   const getCountryTime = (countryName) => {
@@ -180,9 +188,9 @@ const App = () => {
 
   const emptyForm = {
     company: "", owner: "", country: "", address: "", industry: "",
-    whatsapp: "", telephone: "", email: "", website: "", instagram: "",
+    whatsapp: "", telephone: "", email: "", website: "", instagram: "", tiktok: "",
     status: "New Lead", interest: "Unknown",
-    schedules: [], notes: ""
+    schedules: [], notes: "", nextAction: ""
   };
   const [formData, setFormData] = useState(emptyForm);
 
@@ -200,6 +208,9 @@ const App = () => {
   const upcomingSchedules = (() => {
     let all = [];
     buyers.forEach(buyer => {
+      if (buyer.nextAction && new Date(buyer.nextAction) >= new Date().setHours(0,0,0,0)) {
+        all.push({ date: buyer.nextAction, note: "Jadwal Utama", company: buyer.company, status: buyer.status, interest: buyer.interest, owner: buyer.owner, buyerId: buyer.id });
+      }
       if (buyer.schedules && Array.isArray(buyer.schedules)) {
         buyer.schedules.forEach(sch => {
           if (new Date(sch.date) >= new Date().setHours(0,0,0,0)) {
@@ -244,14 +255,15 @@ const App = () => {
       return nameA.localeCompare(nameB, 'en', { numeric: true, sensitivity: 'base' });
     });
 
+  // --- HANDLERS ---
   const handleExport = () => {
     if (buyers.length === 0) return alert("Data kosong");
-    const headers = ["ID","Nama Perusahaan","Owner","Industri","Negara","Alamat","WhatsApp","Telepon","Email","Website","Instagram","Status","Minat","Catatan", "Jadwal FollowUp"];
+    const headers = ["ID","Nama Perusahaan","Owner","Industri","Negara","Alamat","WhatsApp","Telepon","Email","Website","Instagram","TikTok","Status","Minat","Catatan", "Jadwal Utama", "Jadwal Tambahan"];
     const escape = (t) => t ? `"${String(t).replace(/"/g, '""')}"` : '';
     const rows = [headers.join(','), ...buyers.map(b => [
       b.id, escape(b.company), escape(b.owner), escape(b.industry), escape(b.country), escape(b.address),
-      escape(b.whatsapp), escape(b.telephone), escape(b.email), escape(b.website), escape(b.instagram),
-      escape(b.status), escape(b.interest), escape(b.notes), 
+      escape(b.whatsapp), escape(b.telephone), escape(b.email), escape(b.website), escape(b.instagram), escape(b.tiktok),
+      escape(b.status), escape(b.interest), escape(b.notes), escape(b.nextAction),
       escape(b.schedules ? b.schedules.map(s => `${s.date} (${s.note})`).join('; ') : '')
     ].join(','))];
     const link = document.createElement("a");
@@ -311,6 +323,7 @@ const App = () => {
     }
   };
 
+  // Add Schedule Handlers
   const addSchedule = () => {
     setFormData({
       ...formData,
@@ -328,6 +341,23 @@ const App = () => {
     const newSched = [...(formData.schedules || [])];
     newSched[index][field] = value;
     setFormData({ ...formData, schedules: newSched });
+  };
+
+  // --- QUICK ADD SCHEDULE HANDLER ---
+  const openQuickSchedule = (id) => {
+    setQuickScheduleBuyerId(id);
+    setQuickScheduleData({ date: '', note: '' });
+  };
+
+  const saveQuickSchedule = () => {
+    if (!quickScheduleData.date) return alert("Pilih tanggal");
+    setBuyers(buyers.map(b => {
+      if (b.id === quickScheduleBuyerId) {
+        return { ...b, schedules: [...(b.schedules || []), quickScheduleData] };
+      }
+      return b;
+    }));
+    setQuickScheduleBuyerId(null);
   };
 
   const getStatusColor = (status) => {
@@ -348,6 +378,16 @@ const App = () => {
     return 'bg-gray-50 text-gray-500 border-gray-200';
   };
 
+  // Components
+  const InterestBadge = ({ interest }) => {
+    let color = 'bg-gray-100 text-gray-500';
+    let icon = null;
+    if (interest === 'Hot') { color = 'bg-red-100 text-red-600 border-red-200'; icon = <Icon name="flame" size={10}/>; }
+    if (interest === 'Warm') { color = 'bg-orange-100 text-orange-600 border-orange-200'; }
+    if (interest === 'Cold') { color = 'bg-blue-50 text-blue-400 border-blue-100'; icon = <Icon name="snowflake" size={10}/>; }
+    return <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border w-fit ${color}`}>{icon} {interest}</span>;
+  };
+
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden relative">
       
@@ -363,7 +403,7 @@ const App = () => {
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Icon name="globe" className="text-blue-500" /> ExportPro
           </h1>
-          <p className="text-xs text-slate-500 mt-1">V15.0 Ultimate</p>
+          <p className="text-xs text-slate-500 mt-1">V16.0 Refined</p>
         </div>
         <div className="p-4 md:hidden border-b border-slate-700 flex justify-between items-center">
            <span className="font-bold text-white">Menu</span>
@@ -398,19 +438,18 @@ const App = () => {
                 <div className="flex gap-4 overflow-x-auto pb-2">
                   {upcomingSchedules.length > 0 ? upcomingSchedules.map((item, idx) => (
                     <div key={idx} className="min-w-[260px] bg-white p-3 rounded-lg border border-blue-100 shadow-sm hover:shadow-md transition-shadow relative">
-                      <div className="flex justify-between items-start mb-1">
-                         <div className="font-bold text-sm text-slate-700 truncate w-32" title={item.company}>{item.company}</div>
-                         <div className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                      {/* Interest Badge in Corner */}
+                      <div className="absolute top-2 right-2">
+                          <InterestBadge interest={item.interest} />
+                      </div>
+                      <div className="flex flex-col justify-between items-start mb-1 mt-6">
+                         <div className="font-bold text-sm text-slate-700 truncate w-full" title={item.company}>{item.company}</div>
+                         <div className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1 mt-1">
                            <Icon name="user" size={10}/> {item.owner || 'No Name'}
                          </div>
                       </div>
                       <div className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium text-blue-600">
-                        <Icon name="calendar" size={12}/> {item.date}
-                      </div>
-                      <div className="text-[10px] text-slate-400 mt-1 ml-4 italic truncate">{item.note || "Follow up rutin"}</div>
-                      <div className="mt-2 flex gap-2">
-                         <span className={`text-[9px] px-1.5 py-0.5 rounded border ${getStatusColor(item.status)}`}>{item.status}</span>
-                         <span className={`text-[9px] px-1.5 py-0.5 rounded border ${getInterestColor(item.interest)}`}>{item.interest}</span>
+                        <Icon name="calendar" size={12}/> {item.date} <span className="text-slate-400 font-normal">({item.note || 'Jadwal'})</span>
                       </div>
                     </div>
                   )) : <div className="text-sm text-slate-400 italic">Tidak ada jadwal follow up mendatang.</div>}
@@ -510,6 +549,7 @@ const App = () => {
                       <option value="Contacted">Contacted</option>
                       <option value="Negotiating">Nego</option>
                       <option value="Closed">Closed</option>
+                      <option value="Lost">Lost</option>
                     </select>
                  </div>
                  <button onClick={() => { setFormData(emptyForm); setIsEditing(false); setIsModalOpen(true); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-700"><Icon name="plus"/> <span className="hidden md:inline">Tambah</span></button>
@@ -540,45 +580,40 @@ const App = () => {
                           <div className="font-bold text-slate-800 text-base">{buyer.company || '-'}</div>
                           <div className="text-xs font-medium text-slate-500 mt-1">{buyer.owner || '-'}</div>
                           {buyer.industry && <div className="mt-1 text-[10px] text-slate-400">{buyer.industry}</div>}
-                          {/* Mobile View Extras */}
                           <div className="md:hidden mt-2 space-y-1">
                              <div className="text-xs flex items-center gap-1"><Icon name="globe" size={10}/> {buyer.country}</div>
                              <div className="text-xs flex items-center gap-1 text-green-600"><Icon name="whatsapp" size={10}/> {buyer.whatsapp || '-'}</div>
                           </div>
                         </td>
 
-                        {/* LOKASI & ALAMAT LENGKAP */}
-                        <td className="p-4 align-top max-w-[180px] hidden md:table-cell">
+                        {/* LOKASI */}
+                        <td className="p-4 align-top max-w-[150px] hidden md:table-cell">
                           <div className="font-bold text-slate-700 flex items-center gap-1 mb-1 text-xs uppercase">
                              <Icon name="globe" size={12} className="text-blue-400"/> {buyer.country || '-'}
                           </div>
                           {buyer.country && (
-                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-100 mb-2">
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-100 mb-1">
                                <Icon name="clock" size={10}/> {getCountryTime(buyer.country) || '--:--'}
                             </div>
                           )}
-                          {/* ALAMAT LENGKAP DITAMPILKAN DISINI */}
                           <div className="text-xs text-slate-500 leading-relaxed line-clamp-3 hover:line-clamp-none transition-all cursor-pointer" title={buyer.address}>
                             {buyer.address && !buyer.address.includes('http') ? buyer.address : '-'}
                           </div>
                         </td>
 
-                        {/* KONTAK TERPISAH (WA / TELP / EMAIL) */}
+                        {/* KONTAK */}
                         <td className="p-4 align-top min-w-[160px] hidden md:table-cell">
                            <div className="space-y-2">
-                              {/* WHATSAPP */}
                               <div className="flex items-center gap-2 text-xs">
                                  <Icon name="whatsapp" size={14} className="text-green-600"/>
                                  {buyer.whatsapp ? (
                                    <a href={`https://wa.me/${buyer.whatsapp.replace(/[^0-9]/g, '')}`} target="_blank" className="font-bold text-green-700 hover:underline">{buyer.whatsapp}</a>
                                  ) : <span className="text-slate-300 italic">No WA</span>}
                               </div>
-                              {/* TELEPON KANTOR */}
                               <div className="flex items-center gap-2 text-xs">
                                  <Icon name="phone" size={14} className="text-slate-400"/>
                                  {buyer.telephone ? <span className="text-slate-600 font-mono">{buyer.telephone}</span> : <span className="text-slate-300 italic">No Telp</span>}
                               </div>
-                              {/* EMAIL */}
                               <div className="flex items-center gap-2 text-xs pt-2 border-t border-slate-100 mt-1">
                                  <Icon name="mail" size={14} className="text-blue-500"/>
                                  {buyer.email ? <a href={`mailto:${buyer.email}`} className="text-blue-600 hover:underline truncate w-28 block">{buyer.email}</a> : <span className="text-slate-300">-</span>}
@@ -595,6 +630,12 @@ const App = () => {
                                 </a>
                               ) : <span className="text-slate-300 text-xs flex gap-1"><Icon name="instagram" size={12}/> -</span>}
                               
+                              {buyer.tiktok ? (
+                                <a href={buyer.tiktok.startsWith('http') ? buyer.tiktok : `https://tiktok.com/@${buyer.tiktok.replace('@','')}`} target="_blank" className="flex items-center gap-2 px-2 py-1 bg-slate-800 text-white rounded hover:bg-black border border-slate-600 text-xs font-medium transition-colors">
+                                  <Icon name="tiktok" size={12}/> TikTok
+                                </a>
+                              ) : <span className="text-slate-300 text-xs flex gap-1"><Icon name="tiktok" size={12}/> -</span>}
+
                               {buyer.website ? (
                                 <a href={buyer.website} target="_blank" className="flex items-center gap-2 px-2 py-1 bg-slate-100 text-slate-700 rounded hover:bg-slate-200 border border-slate-200 text-xs font-medium transition-colors">
                                   <Icon name="globe" size={12}/> Website
@@ -606,7 +647,6 @@ const App = () => {
                         {/* STATUS */}
                         <td className="p-4 align-top min-w-[140px]">
                           <div className="flex flex-col gap-2">
-                            {/* Status Select */}
                             <select 
                               value={buyer.status}
                               onChange={(e) => handleQuickUpdate(buyer.id, 'status', e.target.value)}
@@ -619,7 +659,6 @@ const App = () => {
                               <option value="Lost">Lost</option>
                             </select>
 
-                            {/* Interest Select */}
                             <select 
                                value={buyer.interest}
                                onChange={(e) => handleQuickUpdate(buyer.id, 'interest', e.target.value)}
@@ -631,28 +670,29 @@ const App = () => {
                                <option value="Hot">Hot</option>
                             </select>
                             
-                            {/* MULTI JADWAL LIST */}
-                            {buyer.schedules && buyer.schedules.length > 0 ? (
-                              <div className="flex flex-col gap-1 mt-1">
-                                {buyer.schedules
-                                  .filter(s => {
-                                    const d = new Date(s.date);
-                                    return !isNaN(d.getTime()) && d >= new Date().setHours(0,0,0,0);
-                                  })
-                                  .sort((a,b) => new Date(a.date) - new Date(b.date))
-                                  .slice(0, 2) 
-                                  .map((s, idx) => (
-                                    <div key={idx} className="flex items-start gap-1 text-[10px] bg-orange-50 text-orange-700 px-2 py-1 rounded border border-orange-100">
-                                       <Icon name="calendar" size={10} className="mt-0.5 flex-shrink-0"/> 
-                                       <div className="flex flex-col leading-tight">
-                                          <span className="font-bold">{s.date}</span>
-                                          <span className="text-[9px] opacity-80 truncate w-24">{s.note}</span>
-                                       </div>
-                                    </div>
-                                ))}
-                                {buyer.schedules.length > 2 && <span className="text-[9px] text-slate-400 text-center">+ {buyer.schedules.length - 2} jadwal lain</span>}
-                              </div>
-                            ) : <span className="text-[10px] text-slate-300 text-center italic mt-1">-- No Schedule --</span>}
+                            <div className="flex items-center gap-1 w-full">
+                               <input 
+                                 type="date" 
+                                 className="w-full text-[10px] p-1 border rounded bg-slate-50 text-slate-600 cursor-pointer hover:bg-blue-50 transition-colors"
+                                 value={buyer.nextAction || ''}
+                                 onChange={(e) => handleQuickUpdate(buyer.id, 'nextAction', e.target.value)}
+                                 title="Jadwal Utama"
+                               />
+                               {/* TOMBOL QUICK ADD SCHEDULE */}
+                               <button 
+                                 onClick={() => openQuickSchedule(buyer.id)}
+                                 className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200"
+                                 title="Tambah Jadwal Lain"
+                               >
+                                 <Icon name="plus" size={12}/>
+                               </button>
+                            </div>
+
+                            {buyer.schedules && buyer.schedules.length > 0 && (
+                               <div className="text-[9px] text-slate-400 text-center italic">
+                                  + {buyer.schedules.length} jadwal tambahan
+                               </div>
+                            )}
                           </div>
                         </td>
 
@@ -674,18 +714,27 @@ const App = () => {
 
       {/* FLOATING BULK ACTION BAR */}
       {selectedIds.length > 0 && (
-        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-4 py-3 rounded-full shadow-2xl flex items-center gap-3 z-50 animate-bounce-in w-max max-w-[90%] overflow-x-auto">
-          <span className="font-bold text-sm whitespace-nowrap">{selectedIds.length} Dipilih</span>
-          <div className="h-4 w-px bg-slate-600"></div>
-          <button onClick={() => handleBulkStatus('Contacted')} className="text-xs hover:text-yellow-300 whitespace-nowrap">Set Contacted</button>
-          <button onClick={() => handleBulkStatus('Closed')} className="text-xs hover:text-green-300 whitespace-nowrap">Set Closed</button>
-          <div className="h-4 w-px bg-slate-600"></div>
-          <button onClick={handleBulkDelete} className="text-xs font-bold text-red-400 hover:text-red-300 flex items-center gap-1 whitespace-nowrap"><Icon name="trash" size={14}/> Hapus</button>
-          <button onClick={() => setSelectedIds([])} className="ml-1"><Icon name="x"/></button>
+        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex flex-col md:flex-row items-center gap-3 z-50 animate-bounce-in w-max max-w-[95%] overflow-x-auto border border-slate-700">
+          <div className="flex items-center gap-2 font-bold text-sm whitespace-nowrap border-r border-slate-700 pr-3 mr-1">
+             <span className="bg-blue-600 px-2 py-0.5 rounded-full text-xs">{selectedIds.length}</span> Dipilih
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <button onClick={() => handleBulkStatus('New Lead')} className="px-2 py-1 rounded hover:bg-slate-700 text-[10px] border border-slate-600 transition-colors">New</button>
+            <button onClick={() => handleBulkStatus('Contacted')} className="px-2 py-1 rounded hover:bg-yellow-900 hover:border-yellow-700 text-yellow-400 text-[10px] border border-slate-600 transition-colors">Contacted</button>
+            <button onClick={() => handleBulkStatus('Negotiating')} className="px-2 py-1 rounded hover:bg-purple-900 hover:border-purple-700 text-purple-400 text-[10px] border border-slate-600 transition-colors">Nego</button>
+            <button onClick={() => handleBulkStatus('Closed')} className="px-2 py-1 rounded hover:bg-green-900 hover:border-green-700 text-green-400 text-[10px] border border-slate-600 transition-colors">Closed</button>
+            <button onClick={() => handleBulkStatus('Lost')} className="px-2 py-1 rounded hover:bg-gray-700 text-gray-400 text-[10px] border border-slate-600 transition-colors">Lost</button>
+          </div>
+
+          <div className="h-4 w-px bg-slate-700 hidden md:block"></div>
+          
+          <button onClick={handleBulkDelete} className="text-xs font-bold text-red-400 hover:text-red-300 flex items-center gap-1 whitespace-nowrap px-2 py-1 hover:bg-red-900/30 rounded transition-colors"><Icon name="trash" size={14}/> Hapus</button>
+          <button onClick={() => setSelectedIds([])} className="ml-1 hover:text-gray-300"><Icon name="x"/></button>
         </div>
       )}
 
-      {/* MODAL FORM */}
+      {/* MODAL FORM UTAMA */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
@@ -703,6 +752,7 @@ const App = () => {
                <div><label className="text-xs font-bold text-slate-500 uppercase">Telepon Kantor</label><input className="w-full mt-1 p-2 border rounded" value={formData.telephone} onChange={e=>setFormData({...formData, telephone:e.target.value})}/></div>
                <div><label className="text-xs font-bold text-slate-500 uppercase">Email</label><input className="w-full mt-1 p-2 border rounded" value={formData.email} onChange={e=>setFormData({...formData, email:e.target.value})}/></div>
                <div><label className="text-xs font-bold text-slate-500 uppercase">Instagram URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.instagram} onChange={e=>setFormData({...formData, instagram:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">TikTok URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.tiktok} onChange={e=>setFormData({...formData, tiktok:e.target.value})}/></div>
                <div><label className="text-xs font-bold text-slate-500 uppercase">Website URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.website} onChange={e=>setFormData({...formData, website:e.target.value})}/></div>
                
                <div className="md:col-span-2 border-t pt-2 mt-2"><span className="text-xs font-bold text-blue-600 uppercase">Lokasi</span></div>
@@ -713,10 +763,12 @@ const App = () => {
                
                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Minat</label><select className="w-full mt-1 p-2 border rounded" value={formData.interest} onChange={e=>setFormData({...formData, interest:e.target.value})}><option>Unknown</option><option>Cold</option><option>Warm</option><option>Hot</option></select></div>
 
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Jadwal Follow Up (Utama)</label><input type="date" className="w-full mt-1 p-2 border rounded" value={formData.nextAction} onChange={e=>setFormData({...formData, nextAction:e.target.value})}/></div>
+
                <div className="md:col-span-2 border-t pt-2 mt-2">
                  <div className="flex justify-between items-center mb-2">
-                    <label className="text-xs font-bold text-blue-600 uppercase">Jadwal Follow Up</label>
-                    <button type="button" onClick={addSchedule} className="text-xs text-blue-600 hover:underline font-bold">+ Tambah Jadwal</button>
+                    <label className="text-xs font-bold text-blue-600 uppercase">Jadwal Tambahan</label>
+                    <button type="button" onClick={addSchedule} className="text-xs text-blue-600 hover:underline font-bold">+ Tambah</button>
                  </div>
                  {formData.schedules && formData.schedules.map((sched, idx) => (
                    <div key={idx} className="flex gap-2 mb-2 items-center">
@@ -725,7 +777,6 @@ const App = () => {
                       <button type="button" onClick={() => removeSchedule(idx)} className="text-red-500 hover:text-red-700"><Icon name="trash" size={14}/></button>
                    </div>
                  ))}
-                 {(!formData.schedules || formData.schedules.length === 0) && <div className="text-xs text-slate-400 italic">Belum ada jadwal. Klik tambah untuk membuat pengingat.</div>}
                </div>
 
                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Catatan Umum</label><textarea rows="3" className="w-full mt-1 p-2 border rounded" value={formData.notes} onChange={e=>setFormData({...formData, notes:e.target.value})}/></div>
@@ -733,6 +784,32 @@ const App = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* POPUP QUICK ADD SCHEDULE */}
+      {quickScheduleBuyerId && (
+         <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-lg shadow-xl p-4 w-80">
+               <h3 className="font-bold text-sm mb-3 text-slate-700">Tambah Jadwal Cepat</h3>
+               <input 
+                  type="date" 
+                  className="w-full mb-2 p-2 border rounded text-sm"
+                  value={quickScheduleData.date}
+                  onChange={e => setQuickScheduleData({...quickScheduleData, date: e.target.value})}
+               />
+               <input 
+                  type="text" 
+                  placeholder="Catatan (opsional)"
+                  className="w-full mb-4 p-2 border rounded text-sm"
+                  value={quickScheduleData.note}
+                  onChange={e => setQuickScheduleData({...quickScheduleData, note: e.target.value})}
+               />
+               <div className="flex justify-end gap-2">
+                  <button onClick={() => setQuickScheduleBuyerId(null)} className="px-3 py-1 bg-slate-100 rounded text-xs">Batal</button>
+                  <button onClick={saveQuickSchedule} className="px-3 py-1 bg-blue-600 text-white rounded text-xs">Simpan</button>
+               </div>
+            </div>
+         </div>
       )}
     </div>
   );
