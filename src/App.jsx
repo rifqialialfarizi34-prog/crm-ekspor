@@ -14,7 +14,7 @@ import {
   orderBy 
 } from 'firebase/firestore';
 
-// Import Authentication untuk login anonim
+// Kita tetap import Auth, tapi tidak akan memblokir aplikasi jika gagal
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 
 // --- KONFIGURASI FIREBASE ---
@@ -29,36 +29,34 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase services
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app); 
+let app, db, auth;
+try {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  auth = getAuth(app); 
+} catch (e) {
+  console.error("Error Initializing Firebase:", e);
+}
 
 // --- HELPER: FORMAT TANGGAL & WAKTU ---
 const formatDateTimeDisplay = (dateStr) => {
   if (!dateStr) return '-';
   const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return dateStr; // Jika format tidak valid, kembalikan aslinya
-  
-  // Opsi format: 27 Nov 2025, 14:30
+  if (isNaN(date.getTime())) return dateStr; 
+  // Format: 27 Nov 25, 14:30
   return date.toLocaleString('id-ID', { 
-    day: 'numeric', 
-    month: 'short', 
-    year: '2-digit', // Tahun 2 digit biar hemat tempat
-    hour: '2-digit', 
-    minute: '2-digit',
-    hour12: false 
+    day: 'numeric', month: 'short', year: '2-digit', 
+    hour: '2-digit', minute: '2-digit', hour12: false 
   });
 };
 
-// Helper untuk input datetime-local (karena butuh format YYYY-MM-DDTHH:mm)
 const toInputDateTime = (isoString) => {
   if (!isoString) return "";
-  // Jika data lama cuma tanggal (YYYY-MM-DD), tambahkan jam default T09:00 biar rapi di input
   if (isoString.length === 10) return `${isoString}T09:00`;
   return isoString;
 };
 
-// --- BAGIAN IKON (TIDAK BERUBAH) ---
+// --- BAGIAN IKON ---
 const Icon = ({ name, size = 16, className = "" }) => {
   let content;
   switch (name) {
@@ -99,7 +97,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
   );
 };
 
-// --- LOGIKA IMPORT CSV (TIDAK BERUBAH) ---
+// --- LOGIKA IMPORT CSV ---
 const parseCSV = (text) => {
   const lines = text.split(/\r\n|\n/);
   if (lines.length < 1) return [];
@@ -211,37 +209,37 @@ const App = () => {
   const fileInputRef = useRef(null);
   const buyersCollectionRef = collection(db, "buyers");
 
-  // --- 1. PROSES LOGIN ANONIM ---
+  // --- 1. PROSES LOGIN ANONIM (TETAP DICHOBA, TAPI TIDAK MEMBLOKIR) ---
   useEffect(() => {
+    // Coba login secara anonim, tapi jangan set error blocking jika gagal
     signInAnonymously(auth).catch((error) => {
-      console.error("Gagal Login Anonim:", error);
-      if (error.code !== 'auth/api-key-not-valid') {
-          setAuthError("Gagal terhubung ke autentikasi Firebase. Cek koneksi internet.");
-      } else {
-          setAuthError("API Key Firebase Salah. Hubungi Developer.");
-      }
+      console.warn("Login Anonim Gagal (Ini wajar jika dijalankan di Preview/Localhost tanpa authorized domain).", error.message);
+      // Kita tidak men-set 'authError' disini agar aplikasi tidak panik.
+      // Kita akan membiarkan koneksi DB dicoba.
     });
 
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-      } else {
-        setUser(null);
       }
     });
 
     return () => unsubscribeAuth();
   }, []);
 
-  // --- 2. KONEKSI REALTIME FIREBASE ---
+  // --- 2. KONEKSI REALTIME FIREBASE (MODE BYPASS) ---
   useEffect(() => {
-    if (!user) return;
+    if (!db) return;
+
+    // KITA HAPUS SYARAT "if (!user)" AGAR LANGSUNG COBA KONEK MESKI BELUM LOGIN
+    // Ini hanya akan berhasil jika Rules di Firebase diset "allow read, write: if true;"
 
     const q = query(buyersCollectionRef, orderBy("createdAt", "desc"));
 
     const unsubscribeSnapshot = onSnapshot(q, 
       (snapshot) => {
-        setAuthError(null);
+        // SUKSES! Berarti Rules 'if true' bekerja.
+        setAuthError(null); 
         const data = snapshot.docs.map((doc) => ({
           ...doc.data(),
           id: doc.id,
@@ -249,17 +247,18 @@ const App = () => {
         setBuyers(data);
       },
       (error) => {
+        // ERROR PERMISSION DENIED
         console.error("Error Snapshot:", error);
         if (error.code === 'permission-denied') {
-          setAuthError("AKSES DITOLAK: Mohon buka Console Firebase > Firestore Database > Rules, dan ubah menjadi 'allow read, write: if true;'");
+          setAuthError("AKSES DITOLAK: Rules Database belum 'if true'. Buka Console Firebase > Firestore Database > Rules.");
         } else {
-          setAuthError(`Terjadi error: ${error.message}`);
+          setAuthError(`DB ERROR: ${error.message}`);
         }
       }
     );
 
     return () => unsubscribeSnapshot();
-  }, [user]);
+  }, [user]); // Tetap dipantau kalau user berubah, tapi tidak wajib.
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
@@ -309,7 +308,6 @@ const App = () => {
   const upcomingSchedules = (() => {
     let all = [];
     buyers.forEach(buyer => {
-      // Gunakan new Date() untuk parsing tanggal+waktu
       if (buyer.nextAction && new Date(buyer.nextAction) >= new Date().setHours(0,0,0,0)) {
         all.push({ date: buyer.nextAction, note: "Jadwal Utama", company: buyer.company, status: buyer.status, interest: buyer.interest, owner: buyer.owner, buyerId: buyer.id });
       }
@@ -321,7 +319,6 @@ const App = () => {
         });
       }
     });
-    // Sort berdasarkan waktu yang lebih presisi
     return all.sort((a, b) => new Date(a.date) - new Date(b.date));
   })();
 
@@ -535,10 +532,11 @@ const App = () => {
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden relative">
       
-      {/* ALERT BOX JIKA ERROR AUTHENTICATION */}
+      {/* ALERT BOX ERROR / WARNING */}
       {authError && (
-        <div className="absolute top-0 left-0 w-full bg-red-600 text-white p-3 text-center z-[100] shadow-lg animate-pulse font-bold text-sm">
-           <Icon name="alert"/> {authError}
+        <div className="absolute top-0 left-0 w-full bg-red-600 text-white p-4 text-center z-[100] shadow-lg font-bold text-sm flex flex-col gap-1 animate-pulse">
+           <div className="flex items-center justify-center gap-2 text-lg"><Icon name="alert"/> PERHATIAN: KONEKSI DATABASE</div>
+           <div className="font-mono bg-red-800 p-1 rounded">{authError}</div>
         </div>
       )}
 
@@ -554,7 +552,7 @@ const App = () => {
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Icon name="globe" className="text-blue-500" /> ExportPro
           </h1>
-          <p className="text-xs text-slate-500 mt-1">Online Database (Firebase)</p>
+          <p className="text-xs text-slate-500 mt-1">Online Database (Bypass Mode)</p>
         </div>
         <div className="p-4 md:hidden border-b border-slate-700 flex justify-between items-center">
            <span className="font-bold text-white">Menu</span>
@@ -598,7 +596,7 @@ const App = () => {
                            <Icon name="user" size={10}/> {item.owner || 'No Name'}
                          </div>
                       </div>
-                      {/* UPDATE: Tampilan jam di sini */}
+                      {/* Tampilan jam di sini */}
                       <div className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md w-full">
                         <Icon name="calendar" size={12}/> 
                         <span className="truncate">{formatDateTimeDisplay(item.date)}</span> 
@@ -823,7 +821,7 @@ const App = () => {
                                <option value="Hot">Hot</option>
                             </select>
                             
-                            {/* UPDATE: Input menjadi datetime-local agar bisa input JAM */}
+                            {/* Input datetime-local */}
                             <div className="flex items-center gap-1 w-full">
                                <input 
                                  type="datetime-local" 
@@ -917,7 +915,7 @@ const App = () => {
                
                <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Minat</label><select className="w-full mt-1 p-2 border rounded" value={formData.interest} onChange={e=>setFormData({...formData, interest:e.target.value})}><option>Unknown</option><option>Cold</option><option>Warm</option><option>Hot</option></select></div>
 
-               {/* UPDATE: Input Form Utama jadi datetime-local */}
+               {/* Input Form Utama */}
                <div><label className="text-xs font-bold text-slate-500 uppercase">Jadwal Follow Up (Utama)</label><input type="datetime-local" className="w-full mt-1 p-2 border rounded" value={toInputDateTime(formData.nextAction)} onChange={e=>setFormData({...formData, nextAction:e.target.value})}/></div>
 
                <div className="md:col-span-2 border-t pt-2 mt-2">
@@ -927,7 +925,7 @@ const App = () => {
                  </div>
                  {formData.schedules && formData.schedules.map((sched, idx) => (
                    <div key={idx} className="flex gap-2 mb-2 items-center">
-                      {/* UPDATE: Input Jadwal Tambahan jadi datetime-local */}
+                      {/* Input Jadwal Tambahan */}
                       <input type="datetime-local" className="p-2 border rounded text-sm" value={toInputDateTime(sched.date)} onChange={e => updateSchedule(idx, 'date', e.target.value)} />
                       <input type="text" className="p-2 border rounded text-sm flex-1" placeholder="Catatan (misal: Zoom meeting)" value={sched.note} onChange={e => updateSchedule(idx, 'note', e.target.value)} />
                       <button type="button" onClick={() => removeSchedule(idx)} className="text-red-500 hover:text-red-700"><Icon name="trash" size={14}/></button>
@@ -947,7 +945,7 @@ const App = () => {
          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-lg shadow-xl p-4 w-80">
                <h3 className="font-bold text-sm mb-3 text-slate-700">Tambah Jadwal Cepat</h3>
-               {/* UPDATE: Input Popup jadi datetime-local */}
+               {/* Input Popup */}
                <input 
                   type="datetime-local" 
                   className="w-full mb-2 p-2 border rounded text-sm"

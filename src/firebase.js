@@ -7,7 +7,7 @@ import { getFirestore } from "firebase/firestore";
 // 2. COPY bagian "firebaseConfig" dari layar browser Anda, dan PASTE di sini
 // (Gantikan kode di bawah ini dengan yang ada di gambar Anda tadi)
 const firebaseConfig = {
-  apiKey: "AIzaSyCrG7oJCwv_...", // <-- Paste punya Anda di sini
+  apiKey: "AIzaSyCrG7oJClv_StSDKjHQB1fp3fs4RlIfBXQ",
   authDomain: "ekspor-dbrau.firebaseapp.com",
   projectId: "ekspor-dbrau",
   storageBucket: "ekspor-dbrau.firebasestorage.app",
