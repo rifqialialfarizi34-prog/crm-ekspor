@@ -14,7 +14,7 @@ import {
   orderBy 
 } from 'firebase/firestore';
 
-// Kita tetap import Auth, tapi tidak akan memblokir aplikasi jika gagal
+// Auth
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 
 // --- KONFIGURASI FIREBASE ---
@@ -43,9 +43,8 @@ const formatDateTimeDisplay = (dateStr) => {
   if (!dateStr) return '-';
   const date = new Date(dateStr);
   if (isNaN(date.getTime())) return dateStr; 
-  // Format: 27 Nov 25, 14:30
   return date.toLocaleString('id-ID', { 
-    day: 'numeric', month: 'short', year: '2-digit', 
+    day: 'numeric', month: 'short', 
     hour: '2-digit', minute: '2-digit', hour12: false 
   });
 };
@@ -54,6 +53,43 @@ const toInputDateTime = (isoString) => {
   if (!isoString) return "";
   if (isoString.length === 10) return `${isoString}T09:00`;
   return isoString;
+};
+
+// --- HELPER: LOGIKA ZONA WAKTU NEGARA ---
+const getOffsetByCountry = (countryName) => {
+  if (!countryName) return 0;
+  const c = countryName.toLowerCase();
+  
+  if (c.includes('uae') || c.includes('arab') || c.includes('dubai')) return -3;
+  if (c.includes('saudi') || c.includes('riyadh')) return -4;
+  if (c.includes('turkey') || c.includes('turki')) return -4;
+  
+  // Eropa (rata-rata UTC+1 / UTC+2). WIB UTC+7.
+  if (c.includes('germany') || c.includes('france') || c.includes('spain') || c.includes('italy') || c.includes('netherland') || c.includes('belanda')) return -5;
+  if (c.includes('uk') || c.includes('london') || c.includes('inggris')) return -6; 
+  
+  // USA
+  if (c.includes('usa') || c.includes('states') || c.includes('ny')) return -11; 
+  
+  // Asia
+  if (c.includes('china') || c.includes('singapore') || c.includes('hk') || c.includes('malaysia')) return 1; 
+  if (c.includes('japan') || c.includes('korea') || c.includes('tokyo')) return 2; 
+  if (c.includes('australia') || c.includes('sydney')) return 3; 
+  
+  return 0; // Default sama dengan WIB
+};
+
+const calculateBuyerTime = (localDateStr, countryName) => {
+  if (!localDateStr || !countryName) return null;
+  const localDate = new Date(localDateStr);
+  if (isNaN(localDate.getTime())) return null;
+
+  const offsetHours = getOffsetByCountry(countryName);
+  const buyerDate = new Date(localDate.getTime() + (offsetHours * 60 * 60 * 1000));
+  
+  return buyerDate.toLocaleString('en-US', { 
+    hour: '2-digit', minute: '2-digit', hour12: false 
+  });
 };
 
 // --- BAGIAN IKON ---
@@ -87,6 +123,7 @@ const Icon = ({ name, size = 16, className = "" }) => {
     case 'menu': content = <><line x1="3" x2="21" y1="6" y2="6"/><line x1="3" x2="21" y1="12" y2="12"/><line x1="3" x2="21" y1="18" y2="18"/></>; break;
     case 'user': content = <><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>; break;
     case 'link': content = <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>; break;
+    case 'arrow-up': content = <path d="m18 15-6-6-6 6"/>; break;
     default: content = <circle cx="12" cy="12" r="10"/>;
   }
 
@@ -148,6 +185,7 @@ const parseCSV = (text) => {
         status: 'New Lead',
         interest: 'Unknown',
         nextAction: '',
+        nextActionNote: '', 
         schedules: [],
         company: '', owner: '', country: '', address: '', whatsapp: '', telephone: '', email: '', website: '', instagram: '', tiktok: '', industry: '', notes: ''
       };
@@ -192,6 +230,10 @@ const App = () => {
   const [buyers, setBuyers] = useState([]);
   const [user, setUser] = useState(null);
   const [authError, setAuthError] = useState(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  
+  // Highlighting Logic
+  const [highlightedId, setHighlightedId] = useState(null);
 
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -207,39 +249,66 @@ const App = () => {
   const [quickScheduleData, setQuickScheduleData] = useState({ date: '', note: '' });
 
   const fileInputRef = useRef(null);
+  const mainContentRef = useRef(null); // Ref untuk Main Content scrolling
   const buyersCollectionRef = collection(db, "buyers");
 
-  // --- 1. PROSES LOGIN ANONIM (TETAP DICHOBA, TAPI TIDAK MEMBLOKIR) ---
+  // --- LOGIC SCROLL TO TOP ---
+  // PENTING: Event listener dipasang pada element yang scroll (main), bukan window
   useEffect(() => {
-    // Coba login secara anonim, tapi jangan set error blocking jika gagal
-    signInAnonymously(auth).catch((error) => {
-      console.warn("Login Anonim Gagal (Ini wajar jika dijalankan di Preview/Localhost tanpa authorized domain).", error.message);
-      // Kita tidak men-set 'authError' disini agar aplikasi tidak panik.
-      // Kita akan membiarkan koneksi DB dicoba.
-    });
+    const el = mainContentRef.current;
+    if (!el) return;
 
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
+    const handleScroll = () => {
+      if (el.scrollTop > 300) setShowScrollTop(true);
+      else setShowScrollTop(false);
+    };
+    el.addEventListener('scroll', handleScroll);
+    return () => el.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const scrollToTop = () => {
+    if (mainContentRef.current) {
+      mainContentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  // --- JUMP TO DATABASE FROM DASHBOARD ---
+  const jumpToBuyer = (id) => {
+    setActiveTab('database');
+    setHighlightedId(id);
+    // Tunggu render selesai baru scroll
+    setTimeout(() => {
+      const el = document.getElementById(`row-${id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Hilangkan highlight setelah beberapa detik
+        setTimeout(() => setHighlightedId(null), 3000);
       }
-    });
+    }, 200);
+  };
 
+  // --- 1. PROSES LOGIN ANONIM ---
+  useEffect(() => {
+    if (!auth) {
+      setAuthError("ERROR CONFIG: API Key belum diisi!");
+      return;
+    }
+    signInAnonymously(auth).catch((error) => {
+      console.warn("Login Anonim Gagal:", error.message);
+    });
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) setUser(currentUser);
+    });
     return () => unsubscribeAuth();
   }, []);
 
-  // --- 2. KONEKSI REALTIME FIREBASE (MODE BYPASS) ---
+  // --- 2. KONEKSI REALTIME FIREBASE ---
   useEffect(() => {
     if (!db) return;
-
-    // KITA HAPUS SYARAT "if (!user)" AGAR LANGSUNG COBA KONEK MESKI BELUM LOGIN
-    // Ini hanya akan berhasil jika Rules di Firebase diset "allow read, write: if true;"
-
     const q = query(buyersCollectionRef, orderBy("createdAt", "desc"));
-
     const unsubscribeSnapshot = onSnapshot(q, 
       (snapshot) => {
-        // SUKSES! Berarti Rules 'if true' bekerja.
-        setAuthError(null); 
+        setAuthError(null);
         const data = snapshot.docs.map((doc) => ({
           ...doc.data(),
           id: doc.id,
@@ -247,50 +316,28 @@ const App = () => {
         setBuyers(data);
       },
       (error) => {
-        // ERROR PERMISSION DENIED
         console.error("Error Snapshot:", error);
         if (error.code === 'permission-denied') {
-          setAuthError("AKSES DITOLAK: Rules Database belum 'if true'. Buka Console Firebase > Firestore Database > Rules.");
+          setAuthError("AKSES DITOLAK: Cek Rules Firebase.");
         } else {
           setAuthError(`DB ERROR: ${error.message}`);
         }
       }
     );
-
     return () => unsubscribeSnapshot();
-  }, [user]); // Tetap dipantau kalau user berubah, tapi tidak wajib.
+  }, [user]);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
 
-  const getCountryTime = (countryName) => {
-    if (!countryName) return null;
-    try {
-      const c = countryName.toLowerCase();
-      let offset = 0;
-      if (c.includes('uae') || c.includes('arab') || c.includes('dubai')) offset = 4;
-      else if (c.includes('indonesia') || c.includes('jakarta')) offset = 7;
-      else if (c.includes('italy') || c.includes('italia') || c.includes('rome') || c.includes('germany') || c.includes('france') || c.includes('spain') || c.includes('netherland')) offset = 1;
-      else if (c.includes('uk') || c.includes('london')) offset = 0;
-      else if (c.includes('usa') || c.includes('ny') || c.includes('states')) offset = -5;
-      else if (c.includes('china') || c.includes('singapore') || c.includes('hk')) offset = 8;
-      else if (c.includes('japan') || c.includes('tokyo')) offset = 9;
-      else if (c.includes('australia')) offset = 10;
-      
-      const utc = currentTime.getTime() + (currentTime.getTimezoneOffset() * 60000);
-      const buyerTime = new Date(utc + (3600000 * offset));
-      if (isNaN(buyerTime.getTime())) return null;
-      return buyerTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    } catch (e) { return null; }
-  };
-
   const emptyForm = {
     company: "", owner: "", country: "", address: "", industry: "",
     whatsapp: "", telephone: "", email: "", website: "", instagram: "", tiktok: "",
     status: "New Lead", interest: "Unknown",
-    schedules: [], notes: "", nextAction: ""
+    schedules: [], notes: "", 
+    nextAction: "", nextActionNote: "" 
   };
   const [formData, setFormData] = useState(emptyForm);
 
@@ -304,17 +351,38 @@ const App = () => {
     hot: buyers.filter(b => ['Hot', 'Warm'].includes(b.interest)).length,
   };
 
-  // Reminder Logic
+  // Reminder Logic (Updated)
   const upcomingSchedules = (() => {
     let all = [];
     buyers.forEach(buyer => {
       if (buyer.nextAction && new Date(buyer.nextAction) >= new Date().setHours(0,0,0,0)) {
-        all.push({ date: buyer.nextAction, note: "Jadwal Utama", company: buyer.company, status: buyer.status, interest: buyer.interest, owner: buyer.owner, buyerId: buyer.id });
+        all.push({ 
+          date: buyer.nextAction, 
+          note: buyer.nextActionNote || "Jadwal Utama", 
+          company: buyer.company, 
+          status: buyer.status, 
+          interest: buyer.interest, 
+          owner: buyer.owner, 
+          buyerId: buyer.id,
+          country: buyer.country,
+          whatsapp: buyer.whatsapp,
+          email: buyer.email
+        });
       }
       if (buyer.schedules && Array.isArray(buyer.schedules)) {
         buyer.schedules.forEach(sch => {
           if (new Date(sch.date) >= new Date().setHours(0,0,0,0)) {
-            all.push({ ...sch, company: buyer.company, status: buyer.status, interest: buyer.interest, owner: buyer.owner, buyerId: buyer.id });
+            all.push({ 
+              ...sch, 
+              company: buyer.company, 
+              status: buyer.status, 
+              interest: buyer.interest, 
+              owner: buyer.owner, 
+              buyerId: buyer.id,
+              country: buyer.country,
+              whatsapp: buyer.whatsapp,
+              email: buyer.email
+            });
           }
         });
       }
@@ -340,31 +408,25 @@ const App = () => {
     .sort((a, b) => {
       const nameA = (a.company || '').trim();
       const nameB = (b.company || '').trim();
-      if (!nameA) return 1; 
-      if (!nameB) return -1;
+      if (!nameA) return 1; if (!nameB) return -1;
       const getPriority = (str) => {
-        if (!str) return 3;
-        const c = str.charAt(0);
-        if (/[0-9]/.test(c)) return 1; 
-        if (/[a-zA-Z]/.test(c)) return 2; 
-        return 3; 
+        if (!str) return 3; const c = str.charAt(0);
+        if (/[0-9]/.test(c)) return 1; if (/[a-zA-Z]/.test(c)) return 2; return 3; 
       };
-      const rankA = getPriority(nameA);
-      const rankB = getPriority(nameB);
+      const rankA = getPriority(nameA); const rankB = getPriority(nameB);
       if (rankA !== rankB) return rankA - rankB;
       return nameA.localeCompare(nameB, 'en', { numeric: true, sensitivity: 'base' });
     });
 
-  // --- HANDLERS FIREBASE (ASYNC) ---
-
+  // --- HANDLERS ---
   const handleExport = () => {
     if (buyers.length === 0) return alert("Data kosong");
-    const headers = ["ID","Nama Perusahaan","Owner","Industri","Negara","Alamat","WhatsApp","Telepon","Email","Website","Instagram","TikTok","Status","Minat","Catatan", "Jadwal Utama", "Jadwal Tambahan"];
+    const headers = ["ID","Nama Perusahaan","Owner","Industri","Negara","Alamat","WhatsApp","Telepon","Email","Website","Instagram","TikTok","Status","Minat","Catatan", "Jadwal Utama", "Catatan Jadwal Utama", "Jadwal Tambahan"];
     const escape = (t) => t ? `"${String(t).replace(/"/g, '""')}"` : '';
     const rows = [headers.join(','), ...buyers.map(b => [
       b.id, escape(b.company), escape(b.owner), escape(b.industry), escape(b.country), escape(b.address),
       escape(b.whatsapp), escape(b.telephone), escape(b.email), escape(b.website), escape(b.instagram), escape(b.tiktok),
-      escape(b.status), escape(b.interest), escape(b.notes), escape(b.nextAction),
+      escape(b.status), escape(b.interest), escape(b.notes), escape(b.nextAction), escape(b.nextActionNote),
       escape(b.schedules ? b.schedules.map(s => `${s.date} (${s.note})`).join('; ') : '')
     ].join(','))];
     const link = document.createElement("a");
@@ -385,10 +447,8 @@ const App = () => {
             await addDoc(buyersCollectionRef, { ...item, createdAt: Date.now() });
           }
           alert("Import Berhasil!");
-        } else {
-          alert("Format salah atau data kosong.");
-        }
-      } catch (err) { alert('Error reading file or uploading: ' + err.message); }
+        } else { alert("Format salah atau data kosong."); }
+      } catch (err) { alert('Error reading file: ' + err.message); }
     };
     reader.readAsText(file);
     e.target.value = null;
@@ -404,18 +464,12 @@ const App = () => {
         await addDoc(buyersCollectionRef, { ...formData, createdAt: Date.now() });
       }
       setIsModalOpen(false);
-    } catch (err) {
-      alert("Gagal menyimpan: " + err.message);
-    }
+    } catch (err) { alert("Gagal menyimpan: " + err.message); }
   };
 
   const handleDelete = async (id) => {
     if(window.confirm('Hapus data ini dari Database Online?')) {
-      try {
-        await deleteDoc(doc(db, "buyers", id));
-      } catch (err) {
-        alert("Gagal menghapus: " + err.message);
-      }
+      try { await deleteDoc(doc(db, "buyers", id)); } catch (err) { alert("Gagal menghapus: " + err.message); }
     }
   };
 
@@ -423,8 +477,13 @@ const App = () => {
     try {
       const buyerDoc = doc(db, "buyers", id);
       await updateDoc(buyerDoc, { [field]: value });
-    } catch (err) {
-      console.error("Gagal update cepat:", err);
+    } catch (err) { console.error("Gagal update:", err); }
+  };
+
+  const editNoteDirectly = async (id, currentNote) => {
+    const newNote = prompt("Edit Catatan Meet:", currentNote || "");
+    if (newNote !== null) {
+      await handleQuickUpdate(id, 'nextActionNote', newNote);
     }
   };
 
@@ -439,13 +498,9 @@ const App = () => {
   const handleBulkDelete = async () => {
     if (window.confirm(`Hapus ${selectedIds.length} data terpilih secara permanen?`)) {
       try {
-        for (const id of selectedIds) {
-          await deleteDoc(doc(db, "buyers", id));
-        }
+        for (const id of selectedIds) { await deleteDoc(doc(db, "buyers", id)); }
         setSelectedIds([]);
-      } catch (err) {
-        alert("Error bulk delete: " + err.message);
-      }
+      } catch (err) { alert("Error: " + err.message); }
     }
   };
 
@@ -457,17 +512,12 @@ const App = () => {
           await updateDoc(buyerDoc, { status: newStatus });
         }
         setSelectedIds([]);
-      } catch (err) {
-        alert("Error bulk update: " + err.message);
-      }
+      } catch (err) { alert("Error: " + err.message); }
     }
   };
 
   const addSchedule = () => {
-    setFormData({
-      ...formData,
-      schedules: [...(formData.schedules || []), { date: '', note: '' }]
-    });
+    setFormData({ ...formData, schedules: [...(formData.schedules || []), { date: '', note: '' }] });
   };
 
   const removeSchedule = (index) => {
@@ -497,9 +547,15 @@ const App = () => {
         await updateDoc(buyerDoc, { schedules: newSchedules });
         setQuickScheduleBuyerId(null);
       }
-    } catch (err) {
-      alert("Gagal simpan jadwal: " + err.message);
-    }
+    } catch (err) { alert("Gagal simpan jadwal: " + err.message); }
+  };
+
+  // Helper untuk warna kartu dashboard berdasarkan minat
+  const getCardStyle = (interest) => {
+    if (interest === 'Hot') return 'bg-red-50 border-red-200 shadow-red-100 hover:shadow-red-200 cursor-pointer';
+    if (interest === 'Warm') return 'bg-orange-50 border-orange-200 shadow-orange-100 hover:shadow-orange-200 cursor-pointer';
+    if (interest === 'Cold') return 'bg-blue-50 border-blue-200 shadow-blue-100 hover:shadow-blue-200 cursor-pointer';
+    return 'bg-white border-blue-100 cursor-pointer'; 
   };
 
   const getStatusColor = (status) => {
@@ -532,7 +588,18 @@ const App = () => {
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden relative">
       
-      {/* ALERT BOX ERROR / WARNING */}
+      {/* TOMBOL SCROLL TO TOP */}
+      {showScrollTop && (
+        <button 
+          onClick={scrollToTop} 
+          className="fixed bottom-6 right-6 z-50 p-3 bg-blue-600 text-white rounded-full shadow-xl hover:bg-blue-700 transition-all animate-bounce"
+          title="Kembali ke atas"
+        >
+          <Icon name="arrow-up" size={20}/>
+        </button>
+      )}
+
+      {/* ALERT BOX ERROR */}
       {authError && (
         <div className="absolute top-0 left-0 w-full bg-red-600 text-white p-4 text-center z-[100] shadow-lg font-bold text-sm flex flex-col gap-1 animate-pulse">
            <div className="flex items-center justify-center gap-2 text-lg"><Icon name="alert"/> PERHATIAN: KONEKSI DATABASE</div>
@@ -552,7 +619,7 @@ const App = () => {
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Icon name="globe" className="text-blue-500" /> ExportPro
           </h1>
-          <p className="text-xs text-slate-500 mt-1">Online Database (Bypass Mode)</p>
+          <p className="text-xs text-slate-500 mt-1">Online Database</p>
         </div>
         <div className="p-4 md:hidden border-b border-slate-700 flex justify-between items-center">
            <span className="font-bold text-white">Menu</span>
@@ -578,7 +645,7 @@ const App = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 mb-16">
+        <main ref={mainContentRef} className="flex-1 overflow-y-auto p-4 md:p-6 mb-16 scroll-smooth">
           {activeTab === 'dashboard' && (
             <div className="space-y-6 animate-fade-in">
               {/* REMINDER */}
@@ -586,21 +653,65 @@ const App = () => {
                 <h3 className="font-bold text-blue-800 mb-3 flex items-center gap-2"><Icon name="bell" className="text-blue-600"/> Jadwal Follow Up Terdekat</h3>
                 <div className="flex gap-4 overflow-x-auto pb-2">
                   {upcomingSchedules.length > 0 ? upcomingSchedules.map((item, idx) => (
-                    <div key={idx} className="min-w-[260px] bg-white p-3 rounded-lg border border-blue-100 shadow-sm hover:shadow-md transition-shadow relative">
+                    <div 
+                      key={idx} 
+                      onClick={() => jumpToBuyer(item.buyerId)}
+                      className={`min-w-[280px] p-3 rounded-lg border transition-all relative group ${getCardStyle(item.interest)}`}
+                    >
                       <div className="absolute top-2 right-2">
                           <InterestBadge interest={item.interest} />
                       </div>
-                      <div className="flex flex-col justify-between items-start mb-1 mt-6">
-                         <div className="font-bold text-sm text-slate-700 truncate w-full" title={item.company}>{item.company}</div>
-                         <div className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1 mt-1">
+                      
+                      {/* Baris 1: Perusahaan */}
+                      <div className="flex flex-col justify-between items-start mb-2 mt-6">
+                         <div className="font-bold text-sm text-slate-800 truncate w-full group-hover:text-blue-600" title={item.company}>{item.company}</div>
+                         <div className="text-[10px] text-slate-500 bg-white/50 px-1.5 py-0.5 rounded flex items-center gap-1 mt-1 border border-slate-100">
                            <Icon name="user" size={10}/> {item.owner || 'No Name'}
                          </div>
                       </div>
-                      {/* Tampilan jam di sini */}
-                      <div className="text-xs text-slate-500 mt-2 flex items-center gap-1 font-medium text-blue-600 bg-blue-50 px-2 py-1 rounded-md w-full">
-                        <Icon name="calendar" size={12}/> 
-                        <span className="truncate">{formatDateTimeDisplay(item.date)}</span> 
-                        <span className="text-slate-400 font-normal ml-auto text-[10px]">({item.note || 'Jadwal'})</span>
+
+                      {/* Baris 2: Lokasi & Waktu Buyer */}
+                      <div className="mb-2 flex items-center gap-2">
+                         <div className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 flex items-center gap-1">
+                            <Icon name="globe" size={10}/> {item.country || 'Unknown'}
+                         </div>
+                         <div className="text-[10px] font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 flex items-center gap-1">
+                            <Icon name="clock" size={10}/> {calculateBuyerTime(item.date, item.country) || '??:??'}
+                         </div>
+                      </div>
+
+                      {/* Baris 3: Kontak (Clickable, stopPropagation agar tidak jump ke database) */}
+                      <div className="flex gap-2 mb-2">
+                         {item.whatsapp && (
+                           <a 
+                             href={`https://wa.me/${item.whatsapp.replace(/[^0-9]/g, '')}`} 
+                             target="_blank" 
+                             onClick={(e) => e.stopPropagation()}
+                             className="flex-1 bg-green-100 text-green-700 text-[10px] font-bold py-1 px-2 rounded text-center border border-green-200 hover:bg-green-200"
+                           >
+                             WA
+                           </a>
+                         )}
+                         {item.email && (
+                           <a 
+                             href={`mailto:${item.email}`} 
+                             onClick={(e) => e.stopPropagation()}
+                             className="flex-1 bg-blue-100 text-blue-700 text-[10px] font-bold py-1 px-2 rounded text-center border border-blue-200 hover:bg-blue-200"
+                           >
+                             Email
+                           </a>
+                         )}
+                      </div>
+
+                      {/* Baris 4: Waktu Lokal & Catatan */}
+                      <div className="text-xs text-slate-600 flex flex-col gap-1 font-medium bg-white/60 p-2 rounded-md border border-slate-100">
+                        <div className="flex items-center gap-1 text-blue-700">
+                           <Icon name="calendar" size={12}/> 
+                           <span>{formatDateTimeDisplay(item.date)} (WIB)</span> 
+                        </div>
+                        <div className="text-[10px] text-slate-500 italic border-t border-slate-200 pt-1 mt-1 truncate">
+                           "{item.note || 'Jadwal'}"
+                        </div>
                       </div>
                     </div>
                   )) : <div className="text-sm text-slate-400 italic">Tidak ada jadwal follow up mendatang.</div>}
@@ -637,8 +748,7 @@ const App = () => {
                   <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Icon name="chart" className="text-blue-500"/> Funnel Lengkap</h3>
                   <div className="space-y-3">
                     {['Total', 'New Leads', 'Negotiating', 'Closed', 'Lost'].map((label, i) => {
-                        let val = 0;
-                        let color = 'gray';
+                        let val = 0; let color = 'gray';
                         if(label === 'Total') { val = stats.total; color = 'blue'; }
                         if(label === 'New Leads') { val = stats.new; color = 'red'; }
                         if(label === 'Negotiating') { val = stats.negotiating; color = 'yellow'; }
@@ -706,158 +816,179 @@ const App = () => {
                  <button onClick={() => { setFormData(emptyForm); setIsEditing(false); setIsModalOpen(true); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-700"><Icon name="plus"/> <span className="hidden md:inline">Tambah</span></button>
               </div>
 
-              <div className="flex-1 overflow-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50 sticky top-0 z-10 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    <tr>
-                      <th className="p-4 w-10 border-b text-center"><input type="checkbox" onChange={handleSelectAll} checked={filteredAndSortedBuyers.length > 0 && selectedIds.length === filteredAndSortedBuyers.length} className="cursor-pointer"/></th>
-                      <th className="p-4 w-10 border-b text-center hidden md:table-cell">No</th>
-                      <th className="p-4 border-b">Perusahaan</th>
-                      <th className="p-4 border-b hidden md:table-cell">Lokasi</th>
-                      <th className="p-4 border-b hidden md:table-cell">Kontak</th>
-                      <th className="p-4 border-b">Medsos & Web</th>
-                      <th className="p-4 border-b">Status</th>
-                      <th className="p-4 border-b text-right">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-sm">
-                    {filteredAndSortedBuyers.map((buyer, index) => (
-                      <tr key={buyer.id} className={`hover:bg-blue-50/30 group ${selectedIds.includes(buyer.id) ? 'bg-blue-50' : ''}`}>
-                        <td className="p-4 align-top text-center"><input type="checkbox" checked={selectedIds.includes(buyer.id)} onChange={() => handleSelectOne(buyer.id)} className="cursor-pointer"/></td>
-                        <td className="p-4 align-top text-center text-slate-400 font-mono text-xs hidden md:table-cell">{index + 1}</td>
-                        
-                        {/* PERUSAHAAN */}
-                        <td className="p-4 align-top max-w-[200px]">
-                          <div className="font-bold text-slate-800 text-base">{buyer.company || '-'}</div>
-                          <div className="text-xs font-medium text-slate-500 mt-1">{buyer.owner || '-'}</div>
-                          {buyer.industry && <div className="mt-1 text-[10px] text-slate-400">{buyer.industry}</div>}
-                          <div className="md:hidden mt-2 space-y-1">
-                             <div className="text-xs flex items-center gap-1"><Icon name="globe" size={10}/> {buyer.country}</div>
-                             <div className="text-xs flex items-center gap-1 text-green-600"><Icon name="whatsapp" size={10}/> {buyer.whatsapp || '-'}</div>
-                          </div>
-                        </td>
-
-                        {/* LOKASI */}
-                        <td className="p-4 align-top max-w-[150px] hidden md:table-cell">
-                          <div className="font-bold text-slate-700 flex items-center gap-1 mb-1 text-xs uppercase">
-                             <Icon name="globe" size={12} className="text-blue-400"/> {buyer.country || '-'}
-                          </div>
-                          {buyer.country && (
-                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-100 mb-1">
-                               <Icon name="clock" size={10}/> {getCountryTime(buyer.country) || '--:--'}
-                            </div>
-                          )}
-                          <div className="text-xs text-slate-500 leading-relaxed line-clamp-3 hover:line-clamp-none transition-all cursor-pointer" title={buyer.address}>
-                            {buyer.address && !buyer.address.includes('http') ? buyer.address : '-'}
-                          </div>
-                        </td>
-
-                        {/* KONTAK */}
-                        <td className="p-4 align-top min-w-[160px] hidden md:table-cell">
-                           <div className="space-y-2">
-                              <div className="flex items-center gap-2 text-xs">
-                                 <Icon name="whatsapp" size={14} className="text-green-600"/>
-                                 {buyer.whatsapp ? (
-                                   <a href={`https://wa.me/${buyer.whatsapp.replace(/[^0-9]/g, '')}`} target="_blank" className="font-bold text-green-700 hover:underline">{buyer.whatsapp}</a>
-                                 ) : <span className="text-slate-300 italic">No WA</span>}
-                              </div>
-                              <div className="flex items-center gap-2 text-xs">
-                                 <Icon name="phone" size={14} className="text-slate-400"/>
-                                 {buyer.telephone ? <span className="text-slate-600 font-mono">{buyer.telephone}</span> : <span className="text-slate-300 italic">No Telp</span>}
-                              </div>
-                              <div className="flex items-center gap-2 text-xs pt-2 border-t border-slate-100 mt-1">
-                                 <Icon name="mail" size={14} className="text-blue-500"/>
-                                 {buyer.email ? <a href={`mailto:${buyer.email}`} className="text-blue-600 hover:underline truncate w-28 block">{buyer.email}</a> : <span className="text-slate-300">-</span>}
-                              </div>
-                           </div>
-                        </td>
-
-                        {/* MEDSOS & WEB */}
-                        <td className="p-4 align-top min-w-[140px]">
-                           <div className="flex flex-col gap-2">
-                              {buyer.instagram ? (
-                                <a href={buyer.instagram.startsWith('http') ? buyer.instagram : `https://instagram.com/${buyer.instagram}`} target="_blank" className="flex items-center gap-2 px-2 py-1 bg-pink-50 text-pink-700 rounded hover:bg-pink-100 border border-pink-100 text-xs font-medium transition-colors">
-                                  <Icon name="instagram" size={12}/> Instagram
-                                </a>
-                              ) : <span className="text-slate-300 text-xs flex gap-1"><Icon name="instagram" size={12}/> -</span>}
-                              
-                              {buyer.tiktok ? (
-                                <a href={buyer.tiktok.startsWith('http') ? buyer.tiktok : `https://tiktok.com/@${buyer.tiktok.replace('@','')}`} target="_blank" className="flex items-center gap-2 px-2 py-1 bg-slate-800 text-white rounded hover:bg-black border border-slate-600 text-xs font-medium transition-colors">
-                                  <Icon name="tiktok" size={12}/> TikTok
-                                </a>
-                              ) : <span className="text-slate-300 text-xs flex gap-1"><Icon name="tiktok" size={12}/> -</span>}
-
-                              {buyer.website ? (
-                                <a href={buyer.website} target="_blank" className="flex items-center gap-2 px-2 py-1 bg-slate-100 text-slate-700 rounded hover:bg-slate-200 border border-slate-200 text-xs font-medium transition-colors">
-                                  <Icon name="globe" size={12}/> Website
-                                </a>
-                              ) : <span className="text-slate-300 text-xs flex gap-1"><Icon name="globe" size={12}/> -</span>}
-                           </div>
-                        </td>
-
-                        {/* STATUS */}
-                        <td className="p-4 align-top min-w-[140px]">
-                          <div className="flex flex-col gap-2">
-                            <select 
-                              value={buyer.status}
-                              onChange={(e) => handleQuickUpdate(buyer.id, 'status', e.target.value)}
-                              className={`text-[10px] font-bold px-2 py-1 rounded border cursor-pointer w-full appearance-none text-center ${getStatusColor(buyer.status)}`}
-                            >
-                              <option value="New Lead">New Lead</option>
-                              <option value="Contacted">Contacted</option>
-                              <option value="Negotiating">Negotiating</option>
-                              <option value="Closed">Closed</option>
-                              <option value="Lost">Lost</option>
-                            </select>
-
-                            <select 
-                               value={buyer.interest}
-                               onChange={(e) => handleQuickUpdate(buyer.id, 'interest', e.target.value)}
-                               className={`text-[10px] font-bold px-2 py-1 rounded border cursor-pointer w-full appearance-none text-center ${getInterestColor(buyer.interest)}`}
-                            >
-                               <option value="Unknown">Unknown</option>
-                               <option value="Cold">Cold</option>
-                               <option value="Warm">Warm</option>
-                               <option value="Hot">Hot</option>
-                            </select>
+              <div className="flex-1 overflow-auto w-full">
+                <div className="min-w-full inline-block align-middle">
+                  <div className="overflow-x-auto border-b border-slate-200">
+                    <table className="min-w-full text-left border-collapse">
+                      <thead className="bg-slate-50 sticky top-0 z-10 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        <tr>
+                          <th className="p-4 w-8 border-b text-center"><input type="checkbox" onChange={handleSelectAll} checked={filteredAndSortedBuyers.length > 0 && selectedIds.length === filteredAndSortedBuyers.length} className="cursor-pointer"/></th>
+                          <th className="p-4 w-8 border-b text-center hidden md:table-cell">No</th>
+                          <th className="p-4 border-b min-w-[200px]">Perusahaan</th>
+                          <th className="p-4 border-b min-w-[150px]">Lokasi</th>
+                          <th className="p-4 border-b min-w-[150px]">Kontak</th>
+                          <th className="p-4 border-b min-w-[120px]">Medsos</th>
+                          <th className="p-4 border-b min-w-[180px]">Status & Meet</th>
+                          <th className="p-4 border-b text-right sticky right-0 bg-slate-50 shadow-[-5px_0_5px_-5px_rgba(0,0,0,0.1)]">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-sm">
+                        {filteredAndSortedBuyers.map((buyer, index) => (
+                          <tr 
+                            key={buyer.id} 
+                            id={`row-${buyer.id}`}
+                            className={`hover:bg-blue-50/30 group transition-colors duration-500 ${selectedIds.includes(buyer.id) ? 'bg-blue-50' : ''} ${highlightedId === buyer.id ? 'bg-yellow-100' : ''}`}
+                          >
+                            <td className="p-4 align-top text-center"><input type="checkbox" checked={selectedIds.includes(buyer.id)} onChange={() => handleSelectOne(buyer.id)} className="cursor-pointer"/></td>
+                            <td className="p-4 align-top text-center text-slate-400 font-mono text-xs hidden md:table-cell">{index + 1}</td>
                             
-                            {/* Input datetime-local */}
-                            <div className="flex items-center gap-1 w-full">
-                               <input 
-                                 type="datetime-local" 
-                                 className="w-full text-[10px] p-1 border rounded bg-slate-50 text-slate-600 cursor-pointer hover:bg-blue-50 transition-colors"
-                                 value={toInputDateTime(buyer.nextAction)}
-                                 onChange={(e) => handleQuickUpdate(buyer.id, 'nextAction', e.target.value)}
-                                 title="Jadwal Utama (Tgl & Jam)"
-                               />
-                               {/* TOMBOL QUICK ADD SCHEDULE */}
-                               <button 
-                                 onClick={() => openQuickSchedule(buyer.id)}
-                                 className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 flex-shrink-0"
-                                 title="Tambah Jadwal Lain"
-                               >
-                                 <Icon name="plus" size={12}/>
-                               </button>
-                            </div>
+                            {/* PERUSAHAAN */}
+                            <td className="p-4 align-top">
+                              <div className="font-bold text-slate-800 text-sm md:text-base">{buyer.company || '-'}</div>
+                              <div className="text-xs font-medium text-slate-500 mt-1">{buyer.owner || '-'}</div>
+                              {buyer.industry && <div className="mt-1 text-[10px] text-slate-400">{buyer.industry}</div>}
+                            </td>
 
-                            {buyer.schedules && buyer.schedules.length > 0 && (
-                               <div className="text-[9px] text-slate-400 text-center italic">
-                                  + {buyer.schedules.length} jadwal tambahan
-                               </div>
-                            )}
-                          </div>
-                        </td>
+                            {/* LOKASI (VISIBLE ON MOBILE NOW) */}
+                            <td className="p-4 align-top">
+                              <div className="font-bold text-slate-700 flex items-center gap-1 mb-1 text-xs uppercase">
+                                <Icon name="globe" size={12} className="text-blue-400"/> {buyer.country || '-'}
+                              </div>
+                              {/* Jam di negara buyer */}
+                              {buyer.country && (
+                                <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-50 text-yellow-700 rounded text-[10px] font-bold border border-yellow-100 mb-1">
+                                   <Icon name="clock" size={10}/> {calculateBuyerTime(new Date().toISOString(), buyer.country) || '--:--'}
+                                </div>
+                              )}
+                              <div className="text-[10px] text-slate-500 leading-relaxed line-clamp-3 hover:line-clamp-none transition-all cursor-pointer min-w-[120px]" title={buyer.address}>
+                                {buyer.address && !buyer.address.includes('http') ? buyer.address : '-'}
+                              </div>
+                            </td>
 
-                        <td className="p-4 align-top text-right">
-                          <div className="flex justify-end gap-1">
-                             <button onClick={() => { setFormData(buyer); setIsEditing(true); setIsModalOpen(true); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><Icon name="edit"/></button>
-                             <button onClick={() => handleDelete(buyer.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded"><Icon name="trash"/></button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                            {/* KONTAK (WA & Phone Terpisah) */}
+                            <td className="p-4 align-top">
+                              <div className="space-y-2 min-w-[140px]">
+                                  {/* WhatsApp */}
+                                  <div className="flex items-center gap-2 text-xs">
+                                    <Icon name="whatsapp" size={14} className="text-green-600"/>
+                                    {buyer.whatsapp ? (
+                                      <a href={`https://wa.me/${buyer.whatsapp.replace(/[^0-9]/g, '')}`} target="_blank" className="font-bold text-green-700 hover:underline">{buyer.whatsapp}</a>
+                                    ) : <span className="text-slate-300 italic">No WA</span>}
+                                  </div>
+                                  
+                                  {/* Telepon */}
+                                  <div className="flex items-center gap-2 text-xs">
+                                    <Icon name="phone" size={14} className="text-slate-400"/>
+                                    {buyer.telephone ? <span className="text-slate-600 font-mono">{buyer.telephone}</span> : <span className="text-slate-300 italic">No Phone</span>}
+                                  </div>
+
+                                  {/* Email */}
+                                  <div className="flex items-center gap-2 text-xs pt-1 border-t border-slate-100">
+                                    <Icon name="mail" size={14} className="text-blue-500"/>
+                                    {buyer.email ? <a href={`mailto:${buyer.email}`} className="text-blue-600 hover:underline truncate w-24 block">{buyer.email}</a> : <span className="text-slate-300">-</span>}
+                                  </div>
+                              </div>
+                            </td>
+
+                            {/* MEDSOS & WEB */}
+                            <td className="p-4 align-top">
+                              <div className="flex flex-col gap-2 min-w-[100px]">
+                                  {buyer.instagram ? (
+                                    <a href={buyer.instagram.startsWith('http') ? buyer.instagram : `https://instagram.com/${buyer.instagram}`} target="_blank" className="flex items-center gap-2 px-2 py-1 bg-pink-50 text-pink-700 rounded hover:bg-pink-100 border border-pink-100 text-xs font-medium transition-colors">
+                                      <Icon name="instagram" size={12}/> IG
+                                    </a>
+                                  ) : null}
+                                  
+                                  {buyer.tiktok ? (
+                                    <a href={buyer.tiktok.startsWith('http') ? buyer.tiktok : `https://tiktok.com/@${buyer.tiktok.replace('@','')}`} target="_blank" className="flex items-center gap-2 px-2 py-1 bg-slate-800 text-white rounded hover:bg-black border border-slate-600 text-xs font-medium transition-colors">
+                                      <Icon name="tiktok" size={12}/> TikTok
+                                    </a>
+                                  ) : null}
+
+                                  {buyer.website ? (
+                                    <a href={buyer.website} target="_blank" className="flex items-center gap-2 px-2 py-1 bg-slate-100 text-slate-700 rounded hover:bg-slate-200 border border-slate-200 text-xs font-medium transition-colors">
+                                      <Icon name="globe" size={12}/> Web
+                                    </a>
+                                  ) : <span className="text-slate-300 text-xs flex gap-1">-</span>}
+                              </div>
+                            </td>
+
+                            {/* STATUS & MEET */}
+                            <td className="p-4 align-top min-w-[180px]">
+                              <div className="flex flex-col gap-2">
+                                <div className="flex gap-1">
+                                  <select 
+                                    value={buyer.status || "New Lead"}
+                                    onChange={(e) => handleQuickUpdate(buyer.id, 'status', e.target.value)}
+                                    className={`text-[10px] font-bold px-1 py-1 rounded border cursor-pointer w-full appearance-none text-center ${getStatusColor(buyer.status)}`}
+                                  >
+                                    <option value="New Lead">New</option>
+                                    <option value="Contacted">Contact</option>
+                                    <option value="Negotiating">Nego</option>
+                                    <option value="Closed">Closed</option>
+                                    <option value="Lost">Lost</option>
+                                  </select>
+                                  <select 
+                                    value={buyer.interest || "Unknown"}
+                                    onChange={(e) => handleQuickUpdate(buyer.id, 'interest', e.target.value)}
+                                    className={`text-[10px] font-bold px-1 py-1 rounded border cursor-pointer w-20 appearance-none text-center ${getInterestColor(buyer.interest)}`}
+                                  >
+                                    <option value="Unknown">Unk</option>
+                                    <option value="Cold">Cold</option>
+                                    <option value="Warm">Warm</option>
+                                    <option value="Hot">Hot</option>
+                                  </select>
+                                </div>
+                                
+                                {/* Input datetime-local */}
+                                <div className="flex items-center gap-1 w-full bg-slate-50 p-1 rounded border border-slate-200">
+                                  <input 
+                                    type="datetime-local" 
+                                    className="w-full text-[10px] bg-transparent text-slate-600 cursor-pointer outline-none"
+                                    value={toInputDateTime(buyer.nextAction)}
+                                    onChange={(e) => handleQuickUpdate(buyer.id, 'nextAction', e.target.value)}
+                                    title="Jadwal Utama (Tgl & Jam)"
+                                  />
+                                  <button 
+                                    onClick={() => openQuickSchedule(buyer.id)}
+                                    className="p-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 flex-shrink-0"
+                                    title="Tambah Jadwal Lain"
+                                  >
+                                    <Icon name="plus" size={10}/>
+                                  </button>
+                                </div>
+                                
+                                {/* Note Jadwal Utama (Click to Edit) */}
+                                {buyer.nextAction && (
+                                  <div 
+                                    onClick={() => editNoteDirectly(buyer.id, buyer.nextActionNote)}
+                                    className="text-[9px] text-slate-500 italic bg-yellow-50 px-1 py-0.5 rounded border border-yellow-100 truncate cursor-pointer hover:bg-yellow-100" 
+                                    title="Klik untuk edit catatan meet"
+                                  >
+                                    Note: {buyer.nextActionNote || '(Klik utk isi)'}
+                                  </div>
+                                )}
+
+                                {buyer.schedules && buyer.schedules.length > 0 && (
+                                  <div className="text-[9px] text-slate-400 text-center italic">
+                                      + {buyer.schedules.length} jadwal lain
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+
+                            <td className="p-4 align-top text-right sticky right-0 bg-white/95 group-hover:bg-blue-50/90 shadow-[-5px_0_5px_-5px_rgba(0,0,0,0.1)]">
+                              <div className="flex justify-end gap-1">
+                                <button onClick={() => { setFormData({ ...emptyForm, ...buyer }); setIsEditing(true); setIsModalOpen(true); }} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"><Icon name="edit"/></button>
+                                <button onClick={() => handleDelete(buyer.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded"><Icon name="trash"/></button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -866,11 +997,10 @@ const App = () => {
 
       {/* FLOATING BULK ACTION BAR */}
       {selectedIds.length > 0 && (
-        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex flex-col md:flex-row items-center gap-3 z-50 animate-bounce-in w-max max-w-[95%] overflow-x-auto border border-slate-700">
+        <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex flex-col md:flex-row items-center gap-3 z-50 animate-bounce-in w-max max-w-[95%] overflow-x-auto border border-slate-700">
           <div className="flex items-center gap-2 font-bold text-sm whitespace-nowrap border-r border-slate-700 pr-3 mr-1">
              <span className="bg-blue-600 px-2 py-0.5 rounded-full text-xs">{selectedIds.length}</span> Dipilih
           </div>
-          
           <div className="flex items-center gap-2">
             <button onClick={() => handleBulkStatus('New Lead')} className="px-2 py-1 rounded hover:bg-slate-700 text-[10px] border border-slate-600 transition-colors">New</button>
             <button onClick={() => handleBulkStatus('Contacted')} className="px-2 py-1 rounded hover:bg-yellow-900 hover:border-yellow-700 text-yellow-400 text-[10px] border border-slate-600 transition-colors">Contacted</button>
@@ -878,7 +1008,7 @@ const App = () => {
             <button onClick={() => handleBulkStatus('Closed')} className="px-2 py-1 rounded hover:bg-green-900 hover:border-green-700 text-green-400 text-[10px] border border-slate-600 transition-colors">Closed</button>
             <button onClick={() => handleBulkStatus('Lost')} className="px-2 py-1 rounded hover:bg-gray-700 text-gray-400 text-[10px] border border-slate-600 transition-colors">Lost</button>
           </div>
-
+          
           <div className="h-4 w-px bg-slate-700 hidden md:block"></div>
           
           <button onClick={handleBulkDelete} className="text-xs font-bold text-red-400 hover:text-red-300 flex items-center gap-1 whitespace-nowrap px-2 py-1 hover:bg-red-900/30 rounded transition-colors"><Icon name="trash" size={14}/> Hapus</button>
@@ -895,28 +1025,46 @@ const App = () => {
               <button onClick={() => setIsModalOpen(false)}><Icon name="x"/></button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-               <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Nama Perusahaan *</label><input required className="w-full mt-1 p-2 border rounded" value={formData.company} onChange={e=>setFormData({...formData, company:e.target.value})}/></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Owner / PIC</label><input className="w-full mt-1 p-2 border rounded" value={formData.owner} onChange={e=>setFormData({...formData, owner:e.target.value})}/></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Industri</label><input className="w-full mt-1 p-2 border rounded" value={formData.industry} onChange={e=>setFormData({...formData, industry:e.target.value})}/></div>
+               <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Nama Perusahaan *</label><input required className="w-full mt-1 p-2 border rounded" value={formData.company || ""} onChange={e=>setFormData({...formData, company:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Owner / PIC</label><input className="w-full mt-1 p-2 border rounded" value={formData.owner || ""} onChange={e=>setFormData({...formData, owner:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Industri</label><input className="w-full mt-1 p-2 border rounded" value={formData.industry || ""} onChange={e=>setFormData({...formData, industry:e.target.value})}/></div>
                
                <div className="md:col-span-2 border-t pt-2 mt-2"><span className="text-xs font-bold text-blue-600 uppercase">Kontak</span></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">WhatsApp (Utama)</label><input className="w-full mt-1 p-2 border rounded" value={formData.whatsapp} onChange={e=>setFormData({...formData, whatsapp:e.target.value})}/></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Telepon Kantor</label><input className="w-full mt-1 p-2 border rounded" value={formData.telephone} onChange={e=>setFormData({...formData, telephone:e.target.value})}/></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Email</label><input className="w-full mt-1 p-2 border rounded" value={formData.email} onChange={e=>setFormData({...formData, email:e.target.value})}/></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Instagram URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.instagram} onChange={e=>setFormData({...formData, instagram:e.target.value})}/></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">TikTok URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.tiktok} onChange={e=>setFormData({...formData, tiktok:e.target.value})}/></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Website URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.website} onChange={e=>setFormData({...formData, website:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">WhatsApp (Utama)</label><input className="w-full mt-1 p-2 border rounded" value={formData.whatsapp || ""} onChange={e=>setFormData({...formData, whatsapp:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Telepon Kantor</label><input className="w-full mt-1 p-2 border rounded" value={formData.telephone || ""} onChange={e=>setFormData({...formData, telephone:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Email</label><input className="w-full mt-1 p-2 border rounded" value={formData.email || ""} onChange={e=>setFormData({...formData, email:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Instagram URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.instagram || ""} onChange={e=>setFormData({...formData, instagram:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">TikTok URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.tiktok || ""} onChange={e=>setFormData({...formData, tiktok:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Website URL</label><input className="w-full mt-1 p-2 border rounded" value={formData.website || ""} onChange={e=>setFormData({...formData, website:e.target.value})}/></div>
                
                <div className="md:col-span-2 border-t pt-2 mt-2"><span className="text-xs font-bold text-blue-600 uppercase">Lokasi</span></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Negara</label><input className="w-full mt-1 p-2 border rounded" value={formData.country} onChange={e=>setFormData({...formData, country:e.target.value})}/></div>
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Alamat Lengkap</label><input className="w-full mt-1 p-2 border rounded" value={formData.address} onChange={e=>setFormData({...formData, address:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Negara</label><input className="w-full mt-1 p-2 border rounded" value={formData.country || ""} onChange={e=>setFormData({...formData, country:e.target.value})}/></div>
+               <div><label className="text-xs font-bold text-slate-500 uppercase">Alamat Lengkap</label><input className="w-full mt-1 p-2 border rounded" value={formData.address || ""} onChange={e=>setFormData({...formData, address:e.target.value})}/></div>
                
-               <div className="md:col-span-2 border-t pt-2 mt-2"><label className="text-xs font-bold text-slate-500 uppercase">Status</label><select className="w-full mt-1 p-2 border rounded" value={formData.status} onChange={e=>setFormData({...formData, status:e.target.value})}><option>New Lead</option><option>Contacted</option><option>Negotiating</option><option>Closed</option><option>Lost</option></select></div>
+               <div className="md:col-span-2 border-t pt-2 mt-2"><label className="text-xs font-bold text-slate-500 uppercase">Status</label><select className="w-full mt-1 p-2 border rounded" value={formData.status || "New Lead"} onChange={e=>setFormData({...formData, status:e.target.value})}><option>New Lead</option><option>Contacted</option><option>Negotiating</option><option>Closed</option><option>Lost</option></select></div>
                
-               <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Minat</label><select className="w-full mt-1 p-2 border rounded" value={formData.interest} onChange={e=>setFormData({...formData, interest:e.target.value})}><option>Unknown</option><option>Cold</option><option>Warm</option><option>Hot</option></select></div>
+               <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Minat</label><select className="w-full mt-1 p-2 border rounded" value={formData.interest || "Unknown"} onChange={e=>setFormData({...formData, interest:e.target.value})}><option>Unknown</option><option>Cold</option><option>Warm</option><option>Hot</option></select></div>
 
-               {/* Input Form Utama */}
-               <div><label className="text-xs font-bold text-slate-500 uppercase">Jadwal Follow Up (Utama)</label><input type="datetime-local" className="w-full mt-1 p-2 border rounded" value={toInputDateTime(formData.nextAction)} onChange={e=>setFormData({...formData, nextAction:e.target.value})}/></div>
+               {/* UPDATE: Input Form Utama dengan Catatan & Kalkulator Waktu */}
+               <div className="md:col-span-2 bg-blue-50 p-3 rounded-lg border border-blue-100">
+                 <label className="text-xs font-bold text-blue-700 uppercase mb-2 block">Jadwal Meet Utama</label>
+                 <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div className="col-span-2 md:col-span-1">
+                      <span className="text-[10px] text-slate-500 block mb-1">Pilih Waktu (WIB):</span>
+                      <input type="datetime-local" className="w-full p-2 border rounded text-sm" value={toInputDateTime(formData.nextAction)} onChange={e=>setFormData({...formData, nextAction:e.target.value})}/>
+                    </div>
+                    <div className="col-span-2 md:col-span-1">
+                      <span className="text-[10px] text-slate-500 block mb-1">Perkiraan Waktu di {formData.country || 'Negara Buyer'}:</span>
+                      <div className="w-full p-2 bg-white border rounded text-sm text-slate-700 font-medium">
+                        {calculateBuyerTime(formData.nextAction, formData.country) || '--:--'}
+                      </div>
+                    </div>
+                 </div>
+                 <div>
+                    <span className="text-[10px] text-slate-500 block mb-1">Catatan Meet:</span>
+                    <input type="text" placeholder="Misal: Zoom link, Agenda, dll" className="w-full p-2 border rounded text-sm" value={formData.nextActionNote || ""} onChange={e=>setFormData({...formData, nextActionNote:e.target.value})}/>
+                 </div>
+               </div>
 
                <div className="md:col-span-2 border-t pt-2 mt-2">
                  <div className="flex justify-between items-center mb-2">
@@ -925,15 +1073,14 @@ const App = () => {
                  </div>
                  {formData.schedules && formData.schedules.map((sched, idx) => (
                    <div key={idx} className="flex gap-2 mb-2 items-center">
-                      {/* Input Jadwal Tambahan */}
                       <input type="datetime-local" className="p-2 border rounded text-sm" value={toInputDateTime(sched.date)} onChange={e => updateSchedule(idx, 'date', e.target.value)} />
-                      <input type="text" className="p-2 border rounded text-sm flex-1" placeholder="Catatan (misal: Zoom meeting)" value={sched.note} onChange={e => updateSchedule(idx, 'note', e.target.value)} />
+                      <input type="text" className="p-2 border rounded text-sm flex-1" placeholder="Catatan" value={sched.note || ""} onChange={e => updateSchedule(idx, 'note', e.target.value)} />
                       <button type="button" onClick={() => removeSchedule(idx)} className="text-red-500 hover:text-red-700"><Icon name="trash" size={14}/></button>
                    </div>
                  ))}
                </div>
 
-               <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Catatan Umum</label><textarea rows="3" className="w-full mt-1 p-2 border rounded" value={formData.notes} onChange={e=>setFormData({...formData, notes:e.target.value})}/></div>
+               <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase">Catatan Umum Buyer</label><textarea rows="3" className="w-full mt-1 p-2 border rounded" value={formData.notes || ""} onChange={e=>setFormData({...formData, notes:e.target.value})}/></div>
                <div className="md:col-span-2 flex justify-end gap-3 mt-4"><button type="button" onClick={()=>setIsModalOpen(false)} className="px-4 py-2 bg-slate-100 rounded">Batal</button><button type="submit" className="px-6 py-2 bg-blue-600 text-white rounded font-bold">Simpan</button></div>
             </form>
           </div>
@@ -945,7 +1092,6 @@ const App = () => {
          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-lg shadow-xl p-4 w-80">
                <h3 className="font-bold text-sm mb-3 text-slate-700">Tambah Jadwal Cepat</h3>
-               {/* Input Popup */}
                <input 
                   type="datetime-local" 
                   className="w-full mb-2 p-2 border rounded text-sm"
@@ -956,7 +1102,7 @@ const App = () => {
                   type="text" 
                   placeholder="Catatan (opsional)"
                   className="w-full mb-4 p-2 border rounded text-sm"
-                  value={quickScheduleData.note}
+                  value={quickScheduleData.note || ""}
                   onChange={e => setQuickScheduleData({...quickScheduleData, note: e.target.value})}
                />
                <div className="flex justify-end gap-2">
