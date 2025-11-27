@@ -253,18 +253,14 @@ const App = () => {
   const buyersCollectionRef = collection(db, "buyers");
 
   // --- LOGIC SCROLL TO TOP ---
-  // PENTING: Event listener dipasang pada element yang scroll (main), bukan window
-  useEffect(() => {
-    const el = mainContentRef.current;
-    if (!el) return;
-
-    const handleScroll = () => {
-      if (el.scrollTop > 300) setShowScrollTop(true);
-      else setShowScrollTop(false);
-    };
-    el.addEventListener('scroll', handleScroll);
-    return () => el.removeEventListener('scroll', handleScroll);
-  }, []);
+  // Fungsi dipanggil saat main content di-scroll
+  const handleScroll = (e) => {
+    if (e.currentTarget.scrollTop > 300) {
+      setShowScrollTop(true);
+    } else {
+      setShowScrollTop(false);
+    }
+  };
 
   const scrollToTop = () => {
     if (mainContentRef.current) {
@@ -276,12 +272,10 @@ const App = () => {
   const jumpToBuyer = (id) => {
     setActiveTab('database');
     setHighlightedId(id);
-    // Tunggu render selesai baru scroll
     setTimeout(() => {
       const el = document.getElementById(`row-${id}`);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        // Hilangkan highlight setelah beberapa detik
         setTimeout(() => setHighlightedId(null), 3000);
       }
     }, 200);
@@ -351,7 +345,7 @@ const App = () => {
     hot: buyers.filter(b => ['Hot', 'Warm'].includes(b.interest)).length,
   };
 
-  // Reminder Logic (Updated)
+  // Reminder Logic
   const upcomingSchedules = (() => {
     let all = [];
     buyers.forEach(buyer => {
@@ -592,7 +586,7 @@ const App = () => {
       {showScrollTop && (
         <button 
           onClick={scrollToTop} 
-          className="fixed bottom-6 right-6 z-50 p-3 bg-blue-600 text-white rounded-full shadow-xl hover:bg-blue-700 transition-all animate-bounce"
+          className="fixed bottom-6 right-6 z-[100] p-3 bg-blue-600 text-white rounded-full shadow-xl hover:bg-blue-700 transition-all animate-bounce"
           title="Kembali ke atas"
         >
           <Icon name="arrow-up" size={20}/>
@@ -645,7 +639,12 @@ const App = () => {
           </div>
         </header>
 
-        <main ref={mainContentRef} className="flex-1 overflow-y-auto p-4 md:p-6 mb-16 scroll-smooth">
+        {/* PENTING: Tambahkan prop onScroll di sini */}
+        <main 
+          ref={mainContentRef} 
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto p-4 md:p-6 mb-16 scroll-smooth"
+        >
           {activeTab === 'dashboard' && (
             <div className="space-y-6 animate-fade-in">
               {/* REMINDER */}
