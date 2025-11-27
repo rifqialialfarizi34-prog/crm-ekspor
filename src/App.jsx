@@ -249,23 +249,28 @@ const App = () => {
   const [quickScheduleData, setQuickScheduleData] = useState({ date: '', note: '' });
 
   const fileInputRef = useRef(null);
-  const mainContentRef = useRef(null); // Ref untuk Main Content scrolling
+  const mainContentRef = useRef(null); // Ref untuk Dashboard
+  const tableContainerRef = useRef(null); // Ref untuk Table (Database)
   const buyersCollectionRef = collection(db, "buyers");
 
   // --- LOGIC SCROLL TO TOP ---
-  // Fungsi dipanggil saat main content di-scroll
+  // Kita buat handler yang fleksibel
   const handleScroll = (e) => {
-    if (e.currentTarget.scrollTop > 300) {
+    if (e.target.scrollTop > 300) {
       setShowScrollTop(true);
     } else {
       setShowScrollTop(false);
     }
   };
 
+  // Reset scroll button saat pindah tab
+  useEffect(() => {
+    setShowScrollTop(false);
+  }, [activeTab]);
+
   const scrollToTop = () => {
-    if (mainContentRef.current) {
-      mainContentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+    if (mainContentRef.current) mainContentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    if (tableContainerRef.current) tableContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // --- JUMP TO DATABASE FROM DASHBOARD ---
@@ -815,7 +820,8 @@ const App = () => {
                  <button onClick={() => { setFormData(emptyForm); setIsEditing(false); setIsModalOpen(true); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 hover:bg-blue-700"><Icon name="plus"/> <span className="hidden md:inline">Tambah</span></button>
               </div>
 
-              <div className="flex-1 overflow-auto w-full">
+              {/* BAGIAN TABEL DATABASE */}
+              <div className="flex-1 overflow-auto w-full" ref={tableContainerRef} onScroll={handleScroll}>
                 <div className="min-w-full inline-block align-middle">
                   <div className="overflow-x-auto border-b border-slate-200">
                     <table className="min-w-full text-left border-collapse">
